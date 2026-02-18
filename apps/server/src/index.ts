@@ -3,6 +3,7 @@ import { createApp } from "./app";
 import { createDrizzleChatIngressService } from "./services/chat/ingress-service";
 import { createDrizzleChatMessageService } from "./services/chat/message-service";
 import { createDrizzleChatRunService } from "./services/chat/run-service";
+import { createDrizzleRunLoopEventService } from "./services/chat/loop-event-service";
 import { createAiSdkChatLlmService } from "./services/chat/llm-service";
 import { createEnvironmentChatModelCatalogService } from "./services/chat/model-catalog-service";
 import { OutboxPublisher } from "./events/outbox-publisher";
@@ -28,6 +29,7 @@ const modelCatalogService = createEnvironmentChatModelCatalogService();
 const llmService = createAiSdkChatLlmService();
 const messageService = createDrizzleChatMessageService(db);
 const runService = createDrizzleChatRunService(db);
+const runLoopEventService = createDrizzleRunLoopEventService(db);
 const ingressService = createDrizzleChatIngressService(db);
 const outboxService = createDrizzleOutboxService(db);
 const outboxPublisher = new OutboxPublisher({
@@ -45,6 +47,7 @@ const runtime = new AgentRuntime({
   summaryModel: summaryModelFromEnvironment,
   memoryRecentMessageCount,
   maxLoopIterations,
+  runLoopEventService,
 });
 
 await runtime.init();

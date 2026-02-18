@@ -60,10 +60,40 @@ export const outboxEvents = sqliteTable("outbox_events", {
     .$defaultFn(() => new Date()),
 });
 
+export const runLoopEvents = sqliteTable("run_loop_events", {
+  id: text("id").primaryKey(),
+  runId: text("run_id")
+    .notNull()
+    .references(() => runs.id),
+  iteration: integer("iteration"),
+  eventType: text("event_type", {
+    enum: [
+      "loop.started",
+      "loop.iteration.started",
+      "loop.step.planned",
+      "loop.step.executed",
+      "loop.step.evaluated",
+      "loop.completed",
+      "loop.error",
+    ],
+  }).notNull(),
+  decision: text("decision", {
+    enum: ["continue", "finish"],
+  }),
+  reason: text("reason", {
+    enum: ["success", "budget_exhausted", "no_progress", "error"],
+  }),
+  payload: text("payload").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 export type Schema = {
   users: typeof users;
   threads: typeof threads;
   messages: typeof messages;
   runs: typeof runs;
   outboxEvents: typeof outboxEvents;
+  runLoopEvents: typeof runLoopEvents;
 };

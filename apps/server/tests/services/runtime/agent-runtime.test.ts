@@ -3,6 +3,8 @@ import { EVENT_TYPE, type AgentEvent } from "../../../src/events/types";
 import type { ChatMessageService } from "../../../src/services/chat/message-service";
 import type { ChatLlmService } from "../../../src/services/chat/llm-service";
 import type { ChatRunService, RunStatus } from "../../../src/services/chat/run-service";
+import type { RunLoopEventService } from "../../../src/services/chat/loop-event-service";
+import { createInMemoryRunLoopEventService } from "../../../src/services/chat/loop-event-service";
 import { AgentRuntime, type RuntimeEventBus } from "../../../src/runtime/agent-runtime";
 
 class FakeRuntimeBus implements RuntimeEventBus {
@@ -74,6 +76,7 @@ describe("AgentRuntime", () => {
     const runtime = new AgentRuntime({
       bus,
       runService,
+      runLoopEventService: createInMemoryRunLoopEventService(),
       consumerGroup: "group_run_success",
       consumerName: "consumer_run_success",
       logger: { info: () => {}, error: () => {} },
@@ -133,6 +136,7 @@ describe("AgentRuntime", () => {
     const runtime = new AgentRuntime({
       bus,
       runService,
+      runLoopEventService: createInMemoryRunLoopEventService(),
       consumerGroup: "group_run_fail",
       consumerName: "consumer_run_fail",
       logger: { info: () => {}, error: () => {} },
@@ -200,6 +204,7 @@ describe("AgentRuntime", () => {
     const runtime = new AgentRuntime({
       bus,
       messageService,
+      runLoopEventService: createInMemoryRunLoopEventService(),
       consumerGroup: "group_persist",
       consumerName: "consumer_persist",
       logger: { info: () => {}, error: () => {} },
@@ -217,6 +222,62 @@ describe("AgentRuntime", () => {
     ]);
     expect(bus.published).toHaveLength(1);
     expect(bus.published[0]?.type).toBe(EVENT_TYPE.AGENT_RUN_COMPLETED);
+  });
+
+  test("persists loop events including extended step schema", async () => {
+    const bus = new FakeRuntimeBus();
+    bus.queuedEntries.push({
+      streamEntryId: "0-7",
+      event: {
+        id: "evt_req_loop_events_1",
+        type: EVENT_TYPE.AGENT_RUN_REQUESTED,
+        timestamp: "2026-01-01T00:00:00.000Z",
+        correlationId: "corr_loop_events_1",
+        payload: {
+          runId: "run_loop_events_1",
+          threadId: "thr_abcdefghijklmnopqrstuvwx",
+          prompt: "Generate a concise answer",
+          model: "gpt-4o-mini",
+        },
+      },
+    });
+
+    const loopEvents: Array<{
+      eventType: string;
+      hasInstruction?: boolean;
+      iteration?: number;
+    }> = [];
+
+    const runLoopEventService: RunLoopEventService = {
+      appendEvent: async (input) => {
+        loopEvents.push({
+          eventType: input.eventType,
+          hasInstruction:
+            typeof (input.payload as { step?: { instruction?: string } }).step?.instruction ===
+            "string",
+          iteration: input.iteration,
+        });
+      },
+      listByRunId: async () => {
+        return [];
+      },
+    };
+
+    const runtime = new AgentRuntime({
+      bus,
+      runLoopEventService,
+      consumerGroup: "group_loop_events",
+      consumerName: "consumer_loop_events",
+      logger: { info: () => {}, error: () => {} },
+    });
+
+    const processed = await runtime.processOnce();
+
+    expect(processed).toBe(1);
+    expect(loopEvents.some((event) => event.eventType === "loop.step.planned")).toBe(true);
+    expect(loopEvents.some((event) => event.eventType === "loop.step.executed")).toBe(true);
+    expect(loopEvents.some((event) => event.eventType === "loop.step.evaluated")).toBe(true);
+    expect(loopEvents.some((event) => event.hasInstruction)).toBe(true);
   });
 
   test("uses summary plus recent memory and honors per-request model", async () => {
@@ -256,6 +317,12 @@ describe("AgentRuntime", () => {
           return { role: message.role, content: message.content };
         });
         return "Implementation steps ready";
+      },
+      evaluateExecution: async () => {
+        return {
+          answer: "sufficient",
+          feedback: "Output is acceptable.",
+        };
       },
     };
 
@@ -322,6 +389,7 @@ describe("AgentRuntime", () => {
       bus,
       messageService,
       chatLlmService,
+      runLoopEventService: createInMemoryRunLoopEventService(),
       consumerGroup: "group_memory",
       consumerName: "consumer_memory",
       summaryModel: "gpt-4o-mini",
@@ -339,8 +407,10 @@ describe("AgentRuntime", () => {
     ]);
     expect(llmCalls.responseModel).toBe("gpt-4.1-mini");
     expect(llmCalls.responseMessages?.[0]?.role).toBe("system");
-    expect(llmCalls.responseMessages?.[0]?.content).toContain("Summary of earlier conversation");
-    expect(llmCalls.responseMessages?.slice(1)).toEqual([
+    expect(llmCalls.responseMessages?.[0]?.content).toContain("Execution instruction:");
+    expect(llmCalls.responseMessages?.[1]?.role).toBe("system");
+    expect(llmCalls.responseMessages?.[1]?.content).toContain("Summary of earlier conversation");
+    expect(llmCalls.responseMessages?.slice(2)).toEqual([
       {
         role: "assistant",
         content: "Rollback included",
@@ -377,6 +447,7 @@ describe("AgentRuntime", () => {
 
     const runtime = new AgentRuntime({
       bus,
+      runLoopEventService: createInMemoryRunLoopEventService(),
       consumerGroup: "group_default",
       consumerName: "consumer_default",
       logger: { info: () => {}, error: () => {} },
@@ -412,6 +483,7 @@ describe("AgentRuntime", () => {
 
     const runtime = new AgentRuntime({
       bus,
+      runLoopEventService: createInMemoryRunLoopEventService(),
       consumerGroup: "group_a",
       consumerName: "consumer_a",
       logger: { info: () => {}, error: () => {} },
@@ -455,6 +527,7 @@ describe("AgentRuntime", () => {
 
     const runtime = new AgentRuntime({
       bus,
+      runLoopEventService: createInMemoryRunLoopEventService(),
       consumerGroup: "group_b",
       consumerName: "consumer_b",
       logger: { info: () => {}, error: () => {} },

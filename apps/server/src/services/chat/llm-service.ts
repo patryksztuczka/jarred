@@ -1,5 +1,6 @@
-import { generateText, type ModelMessage } from "ai";
+import { generateObject, generateText, type ModelMessage } from "ai";
 import { openai } from "@ai-sdk/openai";
+import { z } from "zod";
 
 export interface ChatPromptMessage {
   role: "system" | "user" | "assistant";
@@ -17,9 +18,22 @@ interface SummarizeConversationInput {
   messages: ChatPromptMessage[];
 }
 
+interface EvaluateExecutionInput {
+  model: string;
+  prompt: string;
+  instruction: string;
+  output: string;
+}
+
+export interface EvaluateExecutionResult {
+  answer: "sufficient" | "insufficient";
+  feedback: string;
+}
+
 export interface ChatLlmService {
   generateAssistantResponse(input: GenerateAssistantResponseInput): Promise<string>;
   summarizeConversation(input: SummarizeConversationInput): Promise<string>;
+  evaluateExecution(input: EvaluateExecutionInput): Promise<EvaluateExecutionResult>;
 }
 
 const mapMessagesToCoreMessages = (messages: ChatPromptMessage[]) => {
@@ -36,6 +50,14 @@ const SUMMARIZATION_INSTRUCTION =
 
 const ASSISTANT_MEMORY_INSTRUCTION =
   "Use the conversation summary as persistent context, then prioritize the recent messages for immediate intent.";
+
+const EXECUTION_EVALUATION_INSTRUCTION =
+  "Evaluate if the executor output sufficiently answers the user prompt while following the instruction. Return structured judgment only.";
+
+const executionEvaluationSchema = z.object({
+  answer: z.enum(["sufficient", "insufficient"]),
+  feedback: z.string().min(1).max(240),
+});
 
 const generateAssistantResponseWithAiSdk = async (input: GenerateAssistantResponseInput) => {
   const result = await generateText({
@@ -75,6 +97,30 @@ const summarizeConversationWithAiSdk = async (input: SummarizeConversationInput)
   return result.text.trim();
 };
 
+const evaluateExecutionWithAiSdk = async (input: EvaluateExecutionInput) => {
+  const result = await generateObject({
+    model: openai(input.model),
+    schema: executionEvaluationSchema,
+    messages: [
+      {
+        role: "system",
+        content: EXECUTION_EVALUATION_INSTRUCTION,
+      },
+      {
+        role: "user",
+        content: [
+          `Prompt:\n${input.prompt}`,
+          `Instruction:\n${input.instruction}`,
+          `Executor output:\n${input.output}`,
+          "Mark as insufficient when output is empty, too vague, or misses the prompt.",
+        ].join("\n\n"),
+      },
+    ],
+  });
+
+  return result.object satisfies EvaluateExecutionResult;
+};
+
 const summarizeConversationWithFallback = async (input: SummarizeConversationInput) => {
   const transcript = input.messages
     .map((message) => {
@@ -92,10 +138,27 @@ const generateAssistantResponseWithFallback = async (input: GenerateAssistantRes
   return `Handled prompt: ${lastUserMessage?.content ?? ""}`;
 };
 
+const evaluateExecutionWithFallback = async (input: EvaluateExecutionInput) => {
+  const output = input.output.trim();
+
+  if (!output) {
+    return {
+      answer: "insufficient",
+      feedback: "Output was empty. Generate a direct, non-empty answer.",
+    } satisfies EvaluateExecutionResult;
+  }
+
+  return {
+    answer: "sufficient",
+    feedback: "Output is acceptable.",
+  } satisfies EvaluateExecutionResult;
+};
+
 export const createAiSdkChatLlmService = () => {
   return {
     generateAssistantResponse: generateAssistantResponseWithAiSdk,
     summarizeConversation: summarizeConversationWithAiSdk,
+    evaluateExecution: evaluateExecutionWithAiSdk,
   } satisfies ChatLlmService;
 };
 
@@ -103,6 +166,7 @@ export const createFallbackChatLlmService = () => {
   return {
     generateAssistantResponse: generateAssistantResponseWithFallback,
     summarizeConversation: summarizeConversationWithFallback,
+    evaluateExecution: evaluateExecutionWithFallback,
   } satisfies ChatLlmService;
 };
 

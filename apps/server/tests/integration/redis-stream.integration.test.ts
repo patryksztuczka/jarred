@@ -3,6 +3,7 @@ import Redis from "ioredis";
 import { EVENT_TYPE, type AgentEvent } from "../../src/events/types";
 import { RedisStreamBus } from "../../src/events/redis-stream";
 import { AgentRuntime } from "../../src/runtime/agent-runtime";
+import { createInMemoryRunLoopEventService } from "../../src/services/chat/loop-event-service";
 
 const runRedisTests = process.env.RUN_REDIS_TESTS === "true";
 const describeIfRedis = runRedisTests ? describe : describe.skip;
@@ -19,6 +20,7 @@ describeIfRedis("Redis Streams integration", () => {
       const bus = new RedisStreamBus(redis, { streamKey });
       const runtime = new AgentRuntime({
         bus,
+        runLoopEventService: createInMemoryRunLoopEventService(),
         consumerGroup: groupName,
         consumerName,
         logger: { info: () => {}, error: () => {} },

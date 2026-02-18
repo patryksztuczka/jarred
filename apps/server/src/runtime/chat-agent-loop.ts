@@ -11,21 +11,29 @@ import {
   type ChatPromptMessage,
 } from "../services/chat/llm-service";
 import type { ChatHistoryMessage, ChatMessageService } from "../services/chat/message-service";
+import type { RunLoopEventService } from "../services/chat/loop-event-service";
 
 const DEFAULT_MEMORY_RECENT_MESSAGE_COUNT = 8;
 const DEFAULT_MAX_ITERATIONS = 1;
+const PLANNER_SYSTEM_PROMPT =
+  "You are a planning component in an agent loop. Return one concise instruction for an executor that will produce the next assistant reply. Do not return the final user-facing answer. Keep it under 30 words.";
+const DEFAULT_EXECUTION_INSTRUCTION =
+  "Provide a clear, direct response to the latest user request with concrete details.";
+const DEFAULT_REPLAN_FEEDBACK =
+  "Previous execution returned an empty answer. Generate an instruction that forces a direct, non-empty response.";
 
 interface ChatAgentLoopState {
   threadId: string;
   correlationId: string;
   prompt: string;
   model: string;
+  planFeedback?: string;
   output?: string;
 }
 
 interface ChatAgentLoopStep {
-  type: "respond";
   model: string;
+  instruction: string;
 }
 
 interface ChatAgentLoopObservation {
@@ -40,11 +48,7 @@ interface CreateChatAgentLoopOptions {
   memoryRecentMessageCount?: number;
   maxIterations?: number;
   checkpointStore?: AgentLoopCheckpointStore<ChatAgentLoopState>;
-  eventEmitter?: AgentLoopEventEmitter<
-    ChatAgentLoopState,
-    ChatAgentLoopStep,
-    ChatAgentLoopObservation
-  >;
+  runLoopEventService: RunLoopEventService;
 }
 
 interface RunChatAgentLoopInput {
@@ -82,29 +86,38 @@ export class ChatAgentLoop {
     this.loop = new AgentLoop({
       planner: {
         plan: async ({ state }) => {
+          const instruction = await this.generateStepInstruction(state);
+
           return {
-            type: "respond",
             model: state.model,
+            instruction,
           } satisfies ChatAgentLoopStep;
         },
       },
       executor: {
-        execute: async ({ state }) => {
-          const output = await this.generateAssistantOutput(state);
-          return { output } satisfies ChatAgentLoopObservation;
+        execute: async ({ state, step }) => {
+          const output = await this.generateAssistantOutput(state, step.instruction);
+          return {
+            output,
+          } satisfies ChatAgentLoopObservation;
         },
       },
       evaluator: {
-        evaluate: async ({ state, observation }) => {
+        evaluate: async ({ state, step, observation }) => {
           const output = observation.output.trim();
+          const evaluation = await this.chatLlmService.evaluateExecution({
+            model: state.model,
+            prompt: state.prompt,
+            instruction: step.instruction,
+            output,
+          });
 
-          if (!output) {
+          if (evaluation.answer === "insufficient") {
             return {
-              decision: "finish",
-              reason: "no_progress",
+              decision: "continue",
               nextState: {
                 ...state,
-                output,
+                planFeedback: evaluation.feedback || DEFAULT_REPLAN_FEEDBACK,
               },
             };
           }
@@ -121,7 +134,7 @@ export class ChatAgentLoop {
       },
       checkpointStore:
         options.checkpointStore ?? createInMemoryAgentLoopCheckpointStore<ChatAgentLoopState>(),
-      eventEmitter: options.eventEmitter,
+      eventEmitter: createRunLoopEventEmitter(options.runLoopEventService),
     });
   }
 
@@ -131,6 +144,7 @@ export class ChatAgentLoop {
       correlationId: input.correlationId,
       prompt: input.prompt,
       model: input.model || this.defaultModel,
+      planFeedback: undefined,
       output: undefined,
     } satisfies ChatAgentLoopState;
 
@@ -149,7 +163,63 @@ export class ChatAgentLoop {
     } satisfies ChatAgentLoopRunResult;
   }
 
-  private async generateAssistantOutput(state: ChatAgentLoopState) {
+  private async generateStepInstruction(state: ChatAgentLoopState) {
+    const threadMessages = await this.getThreadMessages(state.threadId);
+    const recentMessages = buildRecentPromptMessages(threadMessages, this.memoryRecentMessageCount);
+    const olderMessages = buildOlderPromptMessages(threadMessages, this.memoryRecentMessageCount);
+
+    const hasCurrentPromptMessage = threadMessages.some((message) => {
+      return message.correlationId === state.correlationId && message.role === "user";
+    });
+
+    if (!hasCurrentPromptMessage) {
+      recentMessages.push({
+        role: "user",
+        content: state.prompt,
+      });
+    }
+
+    const plannerMessages: ChatPromptMessage[] = [
+      {
+        role: "system",
+        content: PLANNER_SYSTEM_PROMPT,
+      },
+    ];
+
+    if (olderMessages.length > 0) {
+      const summary = await this.chatLlmService.summarizeConversation({
+        model: this.summaryModel || state.model,
+        messages: olderMessages,
+      });
+
+      if (summary) {
+        plannerMessages.push(buildMemorySystemMessage(summary));
+      }
+    }
+
+    if (state.planFeedback) {
+      plannerMessages.push({
+        role: "system",
+        content: `Planning feedback: ${state.planFeedback}`,
+      });
+    }
+
+    plannerMessages.push(...recentMessages);
+
+    const plannedInstruction = await this.chatLlmService.generateAssistantResponse({
+      model: state.model,
+      messages: plannerMessages,
+    });
+    const instruction = plannedInstruction.trim();
+
+    if (!instruction) {
+      return DEFAULT_EXECUTION_INSTRUCTION;
+    }
+
+    return instruction;
+  }
+
+  private async generateAssistantOutput(state: ChatAgentLoopState, instruction: string) {
     const threadMessages = await this.getThreadMessages(state.threadId);
     const recentMessages = buildRecentPromptMessages(threadMessages, this.memoryRecentMessageCount);
 
@@ -176,7 +246,11 @@ export class ChatAgentLoop {
       if (summary) {
         return this.chatLlmService.generateAssistantResponse({
           model: state.model,
-          messages: [buildMemorySystemMessage(summary), ...recentMessages],
+          messages: [
+            buildExecutionInstructionSystemMessage(instruction),
+            buildMemorySystemMessage(summary),
+            ...recentMessages,
+          ],
         });
       }
     }
@@ -190,7 +264,7 @@ export class ChatAgentLoop {
 
     return this.chatLlmService.generateAssistantResponse({
       model: state.model,
-      messages: recentMessages,
+      messages: [buildExecutionInstructionSystemMessage(instruction), ...recentMessages],
     });
   }
 
@@ -246,4 +320,37 @@ const buildOlderPromptMessages = (messages: ChatHistoryMessage[], recentMessageC
   return messages.slice(0, -recentMessageCount).map((message) => {
     return toPromptMessage(message);
   });
+};
+
+const buildExecutionInstructionSystemMessage = (instruction: string) => {
+  return {
+    role: "system",
+    content: `Execution instruction: ${instruction}`,
+  } satisfies ChatPromptMessage;
+};
+
+const createRunLoopEventEmitter = (runLoopEventService: RunLoopEventService) => {
+  return {
+    emit: async (event) => {
+      await runLoopEventService.appendEvent({
+        runId: event.sessionId,
+        iteration: event.iteration,
+        eventType: event.type,
+        decision: event.decision,
+        reason: event.reason,
+        payload: {
+          state: event.state,
+          step: event.step,
+          observation: event.observation,
+          decision: event.decision,
+          reason: event.reason,
+          error: event.error,
+        },
+      });
+    },
+  } satisfies AgentLoopEventEmitter<
+    ChatAgentLoopState,
+    ChatAgentLoopStep,
+    ChatAgentLoopObservation
+  >;
 };

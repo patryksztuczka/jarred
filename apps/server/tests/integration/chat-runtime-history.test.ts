@@ -4,6 +4,7 @@ import {
   createInMemoryChatMessageService,
   type ChatHistoryMessage,
 } from "../../src/services/chat/message-service";
+import { createInMemoryRunLoopEventService } from "../../src/services/chat/loop-event-service";
 import { createInMemoryChatRunService } from "../../src/services/chat/run-service";
 import { AgentRuntime, type RuntimeEventBus } from "../../src/runtime/agent-runtime";
 import type { AgentEvent } from "../../src/events/types";
@@ -57,6 +58,7 @@ describe("chat ingress + runtime + history", () => {
       bus,
       messageService,
       runService,
+      runLoopEventService: createInMemoryRunLoopEventService(),
       consumerGroup: "group_history_e2e",
       consumerName: "consumer_history_e2e",
       logger: { info: () => {}, error: () => {} },

@@ -2,6 +2,7 @@ import { EVENT_TYPE, type AgentEvent, type AgentRunRequestedPayload } from "../e
 import type { StreamEntry } from "../events/redis-stream";
 import type { ChatMessageService } from "../services/chat/message-service";
 import type { ChatRunService, RunStatus } from "../services/chat/run-service";
+import type { RunLoopEventService } from "../services/chat/loop-event-service";
 import { createFallbackChatLlmService, type ChatLlmService } from "../services/chat/llm-service";
 import { ChatAgentLoop } from "./chat-agent-loop";
 
@@ -23,6 +24,7 @@ interface AgentRuntimeOptions {
   bus: RuntimeEventBus;
   messageService?: ChatMessageService;
   runService?: ChatRunService;
+  runLoopEventService: RunLoopEventService;
   chatLlmService?: ChatLlmService;
   consumerGroup: string;
   consumerName: string;
@@ -61,6 +63,7 @@ export class AgentRuntime {
       summaryModel: options.summaryModel,
       memoryRecentMessageCount: options.memoryRecentMessageCount,
       maxIterations: options.maxLoopIterations,
+      runLoopEventService: options.runLoopEventService,
     });
   }
 
@@ -153,7 +156,8 @@ export class AgentRuntime {
   }
 
   private async buildCompletedEvent(event: AgentEvent<typeof EVENT_TYPE.AGENT_RUN_REQUESTED>) {
-    const payload = event.payload as AgentRunRequestedPayload;
+    const payload = event.payload;
+
     if (payload.simulateFailure) {
       throw new Error("Simulated runtime failure");
     }
