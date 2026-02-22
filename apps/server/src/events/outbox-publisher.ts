@@ -8,6 +8,7 @@ interface OutboxPublisherOptions {
   pubsub: OutboxPubSub;
   batchSize?: number;
   logger?: Pick<Console, "info" | "error">;
+  pollIntervalMs?: number;
 }
 
 export class OutboxPublisher {
@@ -16,10 +17,12 @@ export class OutboxPublisher {
   private readonly pubsub: OutboxPubSub;
   private readonly batchSize: number;
   private readonly logger: Pick<Console, "info" | "error">;
+  private readonly pollIntervalMs: number;
   private isRunning = false;
   private isProcessing = false;
   private shouldProcessAgain = false;
   private unsubscribe?: () => void;
+  private pollTimer?: ReturnType<typeof setInterval>;
 
   public constructor(options: OutboxPublisherOptions) {
     this.outboxService = options.outboxService;
@@ -27,6 +30,7 @@ export class OutboxPublisher {
     this.pubsub = options.pubsub;
     this.batchSize = options.batchSize ?? 10;
     this.logger = options.logger ?? console;
+    this.pollIntervalMs = options.pollIntervalMs ?? 10_000; // Default 10 seconds
   }
 
   public start() {
@@ -36,18 +40,33 @@ export class OutboxPublisher {
 
     this.isRunning = true;
 
+    // Listen for new events
     this.unsubscribe = this.pubsub.subscribe(() => {
       this.triggerProcessing();
     });
+
     // Initial trigger in case events were created before start
     this.triggerProcessing();
+
+    // Start background poll to catch any missed/failed events
+    this.pollTimer = setInterval(() => {
+      if (this.isRunning) {
+        this.triggerProcessing();
+      }
+    }, this.pollIntervalMs);
   }
 
   public stop() {
     this.isRunning = false;
+
     if (this.unsubscribe) {
       this.unsubscribe();
       this.unsubscribe = undefined;
+    }
+
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = undefined;
     }
   }
 
