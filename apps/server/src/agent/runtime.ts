@@ -4,7 +4,7 @@ import type { ChatMessageService } from "../services/chat/message-service";
 import type { ChatRunService, RunStatus } from "../services/chat/run-service";
 import type { RunLoopEventService } from "../services/chat/loop-event-service";
 import { createFallbackChatLlmService, type ChatLlmService } from "../services/chat/llm-service";
-import { ChatAgentLoop } from "./chat-agent-loop";
+import { AgentLoop } from "./agent-loop";
 
 export interface RuntimeEventBus {
   publish(event: AgentEvent): Promise<void>;
@@ -25,13 +25,11 @@ interface AgentRuntimeOptions {
   messageService?: ChatMessageService;
   runService?: ChatRunService;
   runLoopEventService: RunLoopEventService;
-  chatLlmService?: ChatLlmService;
+  llmService?: ChatLlmService;
   consumerGroup: string;
   consumerName: string;
   defaultModel?: string;
-  summaryModel?: string;
-  memoryRecentMessageCount?: number;
-  maxLoopIterations?: number;
+  recentMessageCount?: number;
   logger?: Pick<Console, "info" | "error">;
 }
 
@@ -41,7 +39,7 @@ export class AgentRuntime {
   private readonly runService?: ChatRunService;
   private readonly consumerGroup: string;
   private readonly consumerName: string;
-  private readonly chatAgentLoop: ChatAgentLoop;
+  private readonly agentLoop: AgentLoop;
   private readonly logger: Pick<Console, "info" | "error">;
   private isRunning = false;
 
@@ -53,16 +51,14 @@ export class AgentRuntime {
     this.consumerName = options.consumerName;
     this.logger = options.logger ?? console;
 
-    const chatLlmService = options.chatLlmService ?? createFallbackChatLlmService();
+    const llmService = options.llmService ?? createFallbackChatLlmService();
     const defaultModel = options.defaultModel ?? DEFAULT_MODEL;
 
-    this.chatAgentLoop = new ChatAgentLoop({
-      chatLlmService,
+    this.agentLoop = new AgentLoop({
+      llmService,
       messageService: options.messageService,
       defaultModel,
-      summaryModel: options.summaryModel,
-      memoryRecentMessageCount: options.memoryRecentMessageCount,
-      maxIterations: options.maxLoopIterations,
+      recentMessageCount: options.recentMessageCount,
       runLoopEventService: options.runLoopEventService,
     });
   }
@@ -162,8 +158,8 @@ export class AgentRuntime {
       throw new Error("Simulated runtime failure");
     }
 
-    const loopResult = await this.chatAgentLoop.run({
-      sessionId: payload.runId,
+    const loopResult = await this.agentLoop.run({
+      runId: payload.runId,
       threadId: payload.threadId,
       correlationId: event.correlationId,
       prompt: payload.prompt,

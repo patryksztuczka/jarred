@@ -6,7 +6,7 @@ import {
 } from "../../src/services/chat/message-service";
 import { createInMemoryRunLoopEventService } from "../../src/services/chat/loop-event-service";
 import { createInMemoryChatRunService } from "../../src/services/chat/run-service";
-import { AgentRuntime, type RuntimeEventBus } from "../../src/runtime/agent-runtime";
+import { AgentRuntime, type RuntimeEventBus } from "../../src/agent/runtime";
 import type { AgentEvent } from "../../src/events/types";
 
 class InMemoryRuntimeBus implements RuntimeEventBus {

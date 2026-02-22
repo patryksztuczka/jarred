@@ -65,24 +65,9 @@ export const runLoopEvents = sqliteTable("run_loop_events", {
   runId: text("run_id")
     .notNull()
     .references(() => runs.id),
-  iteration: integer("iteration"),
   eventType: text("event_type", {
-    enum: [
-      "loop.started",
-      "loop.iteration.started",
-      "loop.step.planned",
-      "loop.step.executed",
-      "loop.step.evaluated",
-      "loop.completed",
-      "loop.error",
-    ],
+    enum: ["loop.started", "loop.completed", "loop.error"],
   }).notNull(),
-  decision: text("decision", {
-    enum: ["continue", "finish"],
-  }),
-  reason: text("reason", {
-    enum: ["success", "budget_exhausted", "no_progress", "error"],
-  }),
   payload: text("payload").notNull(),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .notNull()

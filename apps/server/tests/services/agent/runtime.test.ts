@@ -5,7 +5,7 @@ import type { ChatLlmService } from "../../../src/services/chat/llm-service";
 import type { ChatRunService, RunStatus } from "../../../src/services/chat/run-service";
 import type { RunLoopEventService } from "../../../src/services/chat/loop-event-service";
 import { createInMemoryRunLoopEventService } from "../../../src/services/chat/loop-event-service";
-import { AgentRuntime, type RuntimeEventBus } from "../../../src/runtime/agent-runtime";
+import { AgentRuntime, type RuntimeEventBus } from "../../../src/agent/runtime";
 
 class FakeRuntimeBus implements RuntimeEventBus {
   public readonly published: AgentEvent[] = [];
@@ -224,7 +224,7 @@ describe("AgentRuntime", () => {
     expect(bus.published[0]?.type).toBe(EVENT_TYPE.AGENT_RUN_COMPLETED);
   });
 
-  test("persists loop events including extended step schema", async () => {
+  test("persists loop events", async () => {
     const bus = new FakeRuntimeBus();
     bus.queuedEntries.push({
       streamEntryId: "0-7",
@@ -242,20 +242,12 @@ describe("AgentRuntime", () => {
       },
     });
 
-    const loopEvents: Array<{
-      eventType: string;
-      hasInstruction?: boolean;
-      iteration?: number;
-    }> = [];
+    const loopEvents: Array<{ eventType: string }> = [];
 
     const runLoopEventService: RunLoopEventService = {
       appendEvent: async (input) => {
         loopEvents.push({
           eventType: input.eventType,
-          hasInstruction:
-            typeof (input.payload as { step?: { instruction?: string } }).step?.instruction ===
-            "string",
-          iteration: input.iteration,
         });
       },
       listByRunId: async () => {
@@ -274,13 +266,11 @@ describe("AgentRuntime", () => {
     const processed = await runtime.processOnce();
 
     expect(processed).toBe(1);
-    expect(loopEvents.some((event) => event.eventType === "loop.step.planned")).toBe(true);
-    expect(loopEvents.some((event) => event.eventType === "loop.step.executed")).toBe(true);
-    expect(loopEvents.some((event) => event.eventType === "loop.step.evaluated")).toBe(true);
-    expect(loopEvents.some((event) => event.hasInstruction)).toBe(true);
+    expect(loopEvents.some((event) => event.eventType === "loop.started")).toBe(true);
+    expect(loopEvents.some((event) => event.eventType === "loop.completed")).toBe(true);
   });
 
-  test("uses summary plus recent memory and honors per-request model", async () => {
+  test("uses recent messages and honors per-request model", async () => {
     const bus = new FakeRuntimeBus();
     bus.queuedEntries.push({
       streamEntryId: "0-6",
@@ -299,30 +289,17 @@ describe("AgentRuntime", () => {
     });
 
     const llmCalls: {
-      summaryModel?: string;
-      summaryMessages?: string[];
       responseModel?: string;
       responseMessages?: Array<{ role: string; content: string }>;
     } = {};
 
     const chatLlmService: ChatLlmService = {
-      summarizeConversation: async (input) => {
-        llmCalls.summaryModel = input.model;
-        llmCalls.summaryMessages = input.messages.map((message) => message.content);
-        return "Summary of earlier conversation";
-      },
       generateAssistantResponse: async (input) => {
         llmCalls.responseModel = input.model;
         llmCalls.responseMessages = input.messages.map((message) => {
           return { role: message.role, content: message.content };
         });
         return "Implementation steps ready";
-      },
-      evaluateExecution: async () => {
-        return {
-          answer: "sufficient",
-          feedback: "Output is acceptable.",
-        };
       },
     };
 
@@ -339,8 +316,8 @@ describe("AgentRuntime", () => {
           threadId: input.threadId,
         };
       },
-      listMessagesByThreadId: async () => {
-        return [
+      listMessagesByThreadId: async (threadId, limit) => {
+        const msgs = [
           {
             id: "msg_1",
             threadId: "thr_abcdefghijklmnopqrstuvwx",
@@ -381,36 +358,31 @@ describe("AgentRuntime", () => {
             correlationId: "corr_memory_1",
             createdAt: "2026-01-01T00:00:04.000Z",
           },
-        ];
+        ] as const;
+
+        if (limit) {
+          return [...msgs].slice(-limit);
+        }
+
+        return [...msgs];
       },
     };
 
     const runtime = new AgentRuntime({
       bus,
       messageService,
-      chatLlmService,
+      llmService: chatLlmService,
       runLoopEventService: createInMemoryRunLoopEventService(),
       consumerGroup: "group_memory",
       consumerName: "consumer_memory",
-      summaryModel: "gpt-4o-mini",
-      memoryRecentMessageCount: 2,
+      recentMessageCount: 2,
       logger: { info: () => {}, error: () => {} },
     });
 
     await runtime.processOnce();
 
-    expect(llmCalls.summaryModel).toBe("gpt-4o-mini");
-    expect(llmCalls.summaryMessages).toEqual([
-      "Build a migration plan",
-      "Start from schema changes",
-      "Also include rollback",
-    ]);
     expect(llmCalls.responseModel).toBe("gpt-4.1-mini");
-    expect(llmCalls.responseMessages?.[0]?.role).toBe("system");
-    expect(llmCalls.responseMessages?.[0]?.content).toContain("Execution instruction:");
-    expect(llmCalls.responseMessages?.[1]?.role).toBe("system");
-    expect(llmCalls.responseMessages?.[1]?.content).toContain("Summary of earlier conversation");
-    expect(llmCalls.responseMessages?.slice(2)).toEqual([
+    expect(llmCalls.responseMessages).toEqual([
       {
         role: "assistant",
         content: "Rollback included",

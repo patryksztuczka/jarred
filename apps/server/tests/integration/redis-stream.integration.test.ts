@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import Redis from "ioredis";
 import { EVENT_TYPE, type AgentEvent } from "../../src/events/types";
 import { RedisStreamBus } from "../../src/events/redis-stream";
-import { AgentRuntime } from "../../src/runtime/agent-runtime";
+import { AgentRuntime } from "../../src/agent/runtime";
 import { createInMemoryRunLoopEventService } from "../../src/services/chat/loop-event-service";
 
 const runRedisTests = process.env.RUN_REDIS_TESTS === "true";

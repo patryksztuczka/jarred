@@ -186,15 +186,9 @@ describe("GET /api/chat/runs/:runId/events", () => {
           {
             id: "evt_1",
             runId: "run_abcdefghijklmnopqrstuvwx",
-            iteration: 1,
-            eventType: "loop.step.planned",
-            decision: undefined,
-            reason: undefined,
+            eventType: "loop.completed",
             payload: {
-              step: {
-                model: "gpt-4o-mini",
-                instruction: "Plan a concise answer",
-              },
+              output: "Response text",
             },
             createdAt: "2026-01-01T00:00:00.000Z",
           },
@@ -218,7 +212,7 @@ describe("GET /api/chat/runs/:runId/events", () => {
     expect(body?.events[0]).toEqual(
       expect.objectContaining({
         id: "evt_1",
-        eventType: "loop.step.planned",
+        eventType: "loop.completed",
       }),
     );
   });

@@ -6,8 +6,8 @@ describe("createEnvironmentChatModelCatalogService", () => {
     const catalog = createEnvironmentChatModelCatalogService({});
 
     expect(catalog.getAllowedModels()).toEqual([]);
-    expect(catalog.getDefaultModel()).toBe("gpt-4o-mini");
-    expect(catalog.resolveModel().model).toBe("gpt-4o-mini");
+    expect(catalog.getDefaultModel()).toBe("gpt-5-nano");
+    expect(catalog.resolveModel().model).toBe("gpt-5-nano");
     expect(catalog.resolveModel("claude-sonnet-4").model).toBe("claude-sonnet-4");
   });
 

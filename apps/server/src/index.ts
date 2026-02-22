@@ -9,7 +9,7 @@ import { createEnvironmentChatModelCatalogService } from "./services/chat/model-
 import { OutboxPublisher } from "./events/outbox-publisher";
 import { createDrizzleOutboxService } from "./services/events/outbox-service";
 import { RedisStreamBus } from "./events/redis-stream";
-import { AgentRuntime } from "./runtime/agent-runtime";
+import { AgentRuntime } from "./agent/runtime";
 import { db } from "../db";
 
 const port = Number(process.env.PORT ?? 3000);
@@ -17,9 +17,7 @@ const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
 const redisStreamKey = process.env.REDIS_STREAM_KEY ?? "agent_events";
 const redisConsumerGroup = process.env.REDIS_CONSUMER_GROUP ?? "agent_runtime";
 const redisConsumerName = process.env.REDIS_CONSUMER_NAME ?? `worker-${process.pid}`;
-const memoryRecentMessageCount = Number(process.env.CHAT_MEMORY_RECENT_MESSAGES ?? 8);
-const summaryModelFromEnvironment = process.env.CHAT_SUMMARY_MODEL?.trim();
-const maxLoopIterations = Number(process.env.AGENT_MAX_LOOP_ITERATIONS ?? 1);
+const recentMessageCount = Number(process.env.CHAT_RECENT_MESSAGES ?? 10);
 
 const redis = new Redis(redisUrl);
 const bus = new RedisStreamBus(redis, {
@@ -40,13 +38,11 @@ const runtime = new AgentRuntime({
   bus,
   messageService,
   runService,
-  chatLlmService: llmService,
+  llmService: llmService,
   consumerGroup: redisConsumerGroup,
   consumerName: redisConsumerName,
   defaultModel: modelCatalogService.getDefaultModel(),
-  summaryModel: summaryModelFromEnvironment,
-  memoryRecentMessageCount,
-  maxLoopIterations,
+  recentMessageCount,
   runLoopEventService,
 });
 
@@ -89,10 +85,13 @@ const shutdown = async (signal: NodeJS.Signals) => {
   }
 
   try {
-    await redis.quit();
+    redis.disconnect();
   } catch {
     // no-op
   }
+
+  // eslint-disable-next-line unicorn/no-process-exit
+  process.exit(0);
 };
 
 process.on("SIGINT", () => {

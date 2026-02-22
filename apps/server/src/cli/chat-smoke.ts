@@ -27,7 +27,6 @@ interface RunEventsResponse {
 interface RunLoopEventRecord {
   id: string;
   eventType: string;
-  decision?: "continue" | "finish";
   payload: unknown;
 }
 
@@ -294,64 +293,65 @@ const getRunEvents = async (baseUrl: string, runId: string) => {
 };
 
 const mapEventForDisplay = (event: RunLoopEventRecord) => {
-  if (event.eventType === "loop.step.planned") {
-    const instruction = getStringFromPayload(event.payload, ["step", "instruction"]);
-    if (!instruction) {
-      return;
+  if (event.eventType === "loop.started") {
+    const prompt = getStringFromPayload(event.payload, ["prompt"]);
+    if (!prompt) {
+      return "Agent started processing";
     }
-
-    return `Thinking: ${instruction}`;
+    return `Agent started: "${prompt}"`;
   }
 
-  if (event.eventType === "loop.step.executed" || event.eventType === "loop.state.executed") {
-    const output = getStringFromPayload(event.payload, ["observation", "output"]);
+  if (event.eventType === "loop.completed") {
+    const output = getStringFromPayload(event.payload, ["output"]);
     if (!output) {
-      return;
+      return "Agent completed";
     }
-
-    return `Thinking: ${output}`;
+    return `Agent completed: "${output.slice(0, 100)}${output.length > 100 ? "..." : ""}"`;
   }
 
-  if (event.eventType === "loop.step.evaluated" || event.eventType === "loop.state.evaluated") {
-    const decision = getDecisionFromPayload(event.payload) ?? event.decision;
-    if (!decision) {
-      return;
+  if (event.eventType === "loop.error") {
+    const error = getStringFromPayload(event.payload, ["error"]);
+    if (!error) {
+      return "Agent error";
     }
-
-    return `Deciced to ${decision}`;
+    return `Agent error: ${error}`;
   }
 };
 
-const getStringFromPayload = (payload: unknown, path: [string, string]) => {
+const getStringFromPayload = (payload: unknown, path: string[]) => {
   if (!payload || typeof payload !== "object") {
     return;
   }
 
   const payloadRecord = payload as Record<string, unknown>;
-  const first = payloadRecord[path[0]];
+
+  if (path.length === 1 && path[0]) {
+    const value = payloadRecord[path[0]];
+    if (typeof value !== "string") {
+      return;
+    }
+    return value;
+  }
+
+  const p0 = path[0];
+  const p1 = path[1];
+
+  if (!p0 || !p1) {
+    return;
+  }
+
+  const first = payloadRecord[p0];
   if (!first || typeof first !== "object") {
     return;
   }
 
   const firstRecord = first as Record<string, unknown>;
-  const value = firstRecord[path[1]];
+  const value = firstRecord[p1];
   if (typeof value !== "string") {
     return;
   }
 
   return value;
-};
-
-const getDecisionFromPayload = (payload: unknown) => {
-  if (!payload || typeof payload !== "object") {
-    return;
-  }
-
-  const payloadRecord = payload as Record<string, unknown>;
-  const decision = payloadRecord.decision;
-  if (decision === "continue" || decision === "finish") {
-    return decision;
-  }
 };
 
 await run().catch((error: unknown) => {

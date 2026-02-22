@@ -1,4 +1,4 @@
-const DEFAULT_MODEL = "gpt-4o-mini";
+const DEFAULT_MODEL = "gpt-5-nano";
 
 const parseAllowedModels = (raw: string | undefined) => {
   const configured = raw
