@@ -3,46 +3,28 @@ sequenceDiagram
   participant R as Redis Stream
   participant RT as AgentRuntime
   participant RS as ChatRunService
-  participant ML as ChatAgentLoop
-  participant P as Planner
-  participant E as Executor
+  participant ML as AgentLoop
   participant MS as ChatMessageService
   participant L as ChatLlmService
-  participant V as Evaluator
-  participant K as CheckpointStore
+  participant LES as RunLoopEventService
 
   R-->>RT: Consumer group reads agent.run.requested
   RT->>RS: updateRunStatus(runId, processing)
 
-  RT->>ML: run(sessionId=runId, initialState)
-  ML->>P: plan(state)
-  P-->>ML: step(type=respond, model)
-  ML->>E: execute(step, state)
-  E->>MS: listMessagesByThreadId(threadId)
-  MS-->>E: thread history
-  alt older messages exist
-    E->>L: summarizeConversation(summaryModel, olderMessages)
-    L-->>E: summary text
-  end
-  E->>L: generateAssistantResponse(model, recentMessages+summary?)
-  L-->>E: assistant output
-  E-->>ML: observation(output)
-  ML->>V: evaluate(state, step, observation)
-  alt output is non-empty
-    V-->>ML: finish(success)
-  else output is empty
-    V-->>ML: finish(no_progress)
-  end
-  ML->>K: save(sessionId, nextState)
-  ML-->>RT: result(reason, output?, error?)
+  RT->>ML: run(runId, threadId, prompt, model)
+  ML->>LES: appendEvent(loop.started)
+  
+  ML->>MS: listMessagesByThreadId(threadId)
+  MS-->>ML: thread history
+  
+  ML->>L: generateAssistantResponse(model, messages)
+  L-->>ML: assistant output
+  
+  ML->>LES: appendEvent(loop.completed)
+  ML-->>RT: result(success, output)
 
-  alt reason == success
-    RT->>MS: createAssistantMessage(threadId, output, correlationId)
-    RT->>R: XADD event=agent.run.completed
-    RT->>RS: updateRunStatus(runId, completed)
-  else reason != success or loop error
-    RT->>R: XADD event=agent.run.failed
-    RT->>RS: updateRunStatus(runId, failed, safeError)
-  end
+  RT->>MS: createAssistantMessage(threadId, output, correlationId)
+  RT->>R: XADD event=agent.run.completed
+  RT->>RS: updateRunStatus(runId, completed)
 
   RT->>R: XACK stream entry

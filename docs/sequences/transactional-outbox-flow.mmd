@@ -3,6 +3,7 @@ sequenceDiagram
   participant C as Client
   participant A as API (/api/chat/messages)
   participant D as SQLite DB
+  participant PS as Outbox PubSub
   participant O as Outbox Publisher Worker
   participant R as Redis Stream
   participant RT as Agent Runtime
@@ -13,16 +14,21 @@ sequenceDiagram
   A->>D: INSERT run (queued)
   A->>D: INSERT outbox_event (pending, attempts=0)
   A->>D: COMMIT
+  A->>PS: PUBLISH outbox.event_created
   A-->>C: 202 Accepted (runId, threadId, messageId)
 
-  loop Poll retryable outbox rows
+  PS-->>O: notify outbox.event_created
+  O->>D: SELECT outbox_events WHERE status in (pending, failed)
+  alt Publish succeeds
+    O->>R: XADD agent_events event=<agent.run.requested>
+    O->>D: UPDATE outbox_event status=published, published_at=now
+  else Publish fails
+    O->>D: UPDATE outbox_event status=failed, attempts=attempts+1, last_error=...
+  end
+
+  loop Periodic fallback poll
     O->>D: SELECT outbox_events WHERE status in (pending, failed)
-    alt Publish succeeds
-      O->>R: XADD agent_events event=<agent.run.requested>
-      O->>D: UPDATE outbox_event status=published, published_at=now
-    else Publish fails
-      O->>D: UPDATE outbox_event status=failed, attempts=attempts+1, last_error=...
-    end
+    Note over O,D: same logic as above
   end
 
   R-->>RT: Consumer group reads event
