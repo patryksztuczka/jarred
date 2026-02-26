@@ -1,42 +1,35 @@
 import { EVENT_TYPE, type AgentEvent, type AgentRunRequestedPayload } from "../events/types";
-import type { StreamEntry } from "../events/redis-stream";
-import type { ChatMessageService } from "../services/chat/message-service";
-import type { ChatRunService, RunStatus } from "../services/chat/run-service";
+import type { EventBus } from "../events/redis-stream";
+import type { AssistantResponse } from "../services/chat/llm-service";
+import type { MessageService } from "../services/chat/message-service";
+import type { RunService, RunStatus } from "../services/chat/run-service";
 import type { RunLoopEventService } from "../services/chat/loop-event-service";
-import { createFallbackChatLlmService, type ChatLlmService } from "../services/chat/llm-service";
+import { type LlmService } from "../services/chat/llm-service";
 import { AgentLoop } from "./agent-loop";
-
-export interface RuntimeEventBus {
-  publish(event: AgentEvent): Promise<void>;
-  ensureConsumerGroup(groupName: string): Promise<void>;
-  readGroup(
-    groupName: string,
-    consumerName: string,
-    options?: { blockMs?: number; count?: number },
-  ): Promise<StreamEntry[]>;
-  acknowledge(groupName: string, streamEntryId: string): Promise<void>;
-}
-
-const GENERIC_RUNTIME_ERROR_MESSAGE = "Agent runtime failed to process the request.";
-const DEFAULT_MODEL = "gpt-4o-mini";
+import {
+  DEFAULT_MAX_ITERATIONS,
+  DEFAULT_MODEL,
+  DEFAULT_RECENT_MESSAGES_COUNT,
+} from "../lib/constants";
 
 interface AgentRuntimeOptions {
-  bus: RuntimeEventBus;
-  messageService?: ChatMessageService;
-  runService?: ChatRunService;
+  bus: EventBus;
+  messageService: MessageService;
+  runService: RunService;
   runLoopEventService: RunLoopEventService;
-  llmService?: ChatLlmService;
+  llmService: LlmService;
   consumerGroup: string;
   consumerName: string;
-  defaultModel?: string;
+  model?: string;
   recentMessageCount?: number;
+  maxIterations?: number;
   logger?: Pick<Console, "info" | "error">;
 }
 
 export class AgentRuntime {
-  private readonly bus: RuntimeEventBus;
-  private readonly messageService?: ChatMessageService;
-  private readonly runService?: ChatRunService;
+  private readonly bus: EventBus;
+  private readonly messageService: MessageService;
+  private readonly runService: RunService;
   private readonly consumerGroup: string;
   private readonly consumerName: string;
   private readonly agentLoop: AgentLoop;
@@ -51,15 +44,17 @@ export class AgentRuntime {
     this.consumerName = options.consumerName;
     this.logger = options.logger ?? console;
 
-    const llmService = options.llmService ?? createFallbackChatLlmService();
-    const defaultModel = options.defaultModel ?? DEFAULT_MODEL;
+    const model = options.model ?? DEFAULT_MODEL;
+    const maxIterations = options.maxIterations ?? DEFAULT_MAX_ITERATIONS;
+    const recentMessageCount = options.recentMessageCount ?? DEFAULT_RECENT_MESSAGES_COUNT;
 
     this.agentLoop = new AgentLoop({
-      llmService,
+      llmService: options.llmService,
       messageService: options.messageService,
-      defaultModel,
-      recentMessageCount: options.recentMessageCount,
       runLoopEventService: options.runLoopEventService,
+      recentMessageCount,
+      model,
+      maxIterations,
     });
   }
 
@@ -125,10 +120,11 @@ export class AgentRuntime {
         eventId: event.id,
         correlationId: event.correlationId,
       });
-    } catch {
-      const failedEvent = this.buildFailedEvent(requestedEvent);
+    } catch (error) {
+      const safeError = this.getSafeErrorMessage(error);
+      const failedEvent = this.buildFailedEvent(requestedEvent, safeError);
       await this.bus.publish(failedEvent);
-      await this.updateRunStatus(payload.runId, "failed", GENERIC_RUNTIME_ERROR_MESSAGE);
+      await this.updateRunStatus(payload.runId, "failed", safeError);
 
       this.logger.error("runtime.event.failed", {
         eventId: event.id,
@@ -163,11 +159,19 @@ export class AgentRuntime {
       threadId: payload.threadId,
       correlationId: event.correlationId,
       prompt: payload.prompt,
-      model: payload.model,
     });
 
-    if (loopResult.reason !== "success" || !loopResult.output) {
-      throw new Error(loopResult.error ?? `Agent loop stopped: ${loopResult.reason}`);
+    if (loopResult.reason !== "success") {
+      throw new Error(loopResult.error || "Agent loop stopped.");
+    }
+
+    if (!loopResult.output) {
+      throw new Error("Agent loop returned empty output.");
+    }
+
+    const outputText = this.getAssistantResponseText(loopResult.output);
+    if (!outputText) {
+      throw new Error("Agent loop returned empty output.");
     }
 
     return {
@@ -177,7 +181,7 @@ export class AgentRuntime {
       correlationId: event.correlationId,
       payload: {
         requestEventId: event.id,
-        output: loopResult.output,
+        output: outputText,
       },
     };
   }
@@ -199,7 +203,10 @@ export class AgentRuntime {
     });
   }
 
-  private buildFailedEvent(event: AgentEvent<typeof EVENT_TYPE.AGENT_RUN_REQUESTED>) {
+  private buildFailedEvent(
+    event: AgentEvent<typeof EVENT_TYPE.AGENT_RUN_REQUESTED>,
+    safeError: string,
+  ) {
     return {
       id: crypto.randomUUID(),
       type: EVENT_TYPE.AGENT_RUN_FAILED,
@@ -207,8 +214,34 @@ export class AgentRuntime {
       correlationId: event.correlationId,
       payload: {
         requestEventId: event.id,
-        error: GENERIC_RUNTIME_ERROR_MESSAGE,
+        error: safeError,
       },
     };
+  }
+
+  private getSafeErrorMessage(error: unknown) {
+    if (error instanceof Error && error.message.trim().length > 0) {
+      return error.message;
+    }
+
+    return "unknown";
+  }
+
+  private getAssistantResponseText(output: AssistantResponse) {
+    const text = output.response?.trim();
+    if (text && text.length > 0) {
+      return text;
+    }
+
+    const latestExecution = output.toolExecutions.at(-1);
+    if (latestExecution?.result) {
+      if (typeof latestExecution.result === "string") {
+        return latestExecution.result;
+      }
+
+      return JSON.stringify(latestExecution.result);
+    }
+
+    return undefined;
   }
 }

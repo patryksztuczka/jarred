@@ -10,6 +10,17 @@ interface RedisStreamBusOptions {
   streamKey: string;
 }
 
+export interface EventBus {
+  publish(event: AgentEvent): Promise<void>;
+  ensureConsumerGroup(groupName: string): Promise<void>;
+  readGroup(
+    groupName: string,
+    consumerName: string,
+    options?: { blockMs?: number; count?: number },
+  ): Promise<StreamEntry[]>;
+  acknowledge(groupName: string, streamEntryId: string): Promise<void>;
+}
+
 export class RedisStreamBus implements EventPublisher {
   private readonly redis: Redis;
   private readonly streamKey: string;

@@ -28,7 +28,7 @@ interface UpdateRunStatusInput {
   safeError?: string;
 }
 
-export interface ChatRunService {
+export interface RunService {
   createQueuedRun(input: CreateQueuedRunInput): Promise<ChatRun>;
   updateRunStatus(input: UpdateRunStatusInput): Promise<ChatRun | undefined>;
   getRunById(runId: string): Promise<ChatRun | undefined>;
@@ -119,65 +119,5 @@ export const createDrizzleChatRunService = (
     createQueuedRun,
     updateRunStatus,
     getRunById,
-  } satisfies ChatRunService;
-};
-
-export const createInMemoryChatRunService = (pubsub?: ChatRunPubSub) => {
-  const records = new Map<string, ChatRun>();
-
-  const createQueuedRun = async (input: CreateQueuedRunInput) => {
-    const now = new Date().toISOString();
-    const run: ChatRun = {
-      id: input.id,
-      threadId: input.threadId,
-      correlationId: input.correlationId,
-      status: "queued",
-      safeError: undefined,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    records.set(run.id, run);
-    pubsub?.publish(run.id, { type: "run.status", data: run });
-    return run;
-  };
-
-  const updateRunStatus = async (input: UpdateRunStatusInput) => {
-    const existing = records.get(input.runId);
-    if (!existing) {
-      return;
-    }
-
-    const next: ChatRun = {
-      ...existing,
-      status: input.status,
-      safeError: input.status === "failed" ? input.safeError : undefined,
-      updatedAt: new Date().toISOString(),
-    };
-
-    records.set(input.runId, next);
-    pubsub?.publish(next.id, { type: "run.status", data: next });
-    return next;
-  };
-
-  const getRunById = async (runId: string) => {
-    return records.get(runId);
-  };
-
-  const getByCorrelationId = (threadId: string, correlationId: string) => {
-    for (const run of records.values()) {
-      if (run.threadId === threadId && run.correlationId === correlationId) {
-        return run;
-      }
-    }
-
-    return;
-  };
-
-  return {
-    createQueuedRun,
-    updateRunStatus,
-    getRunById,
-    getByCorrelationId,
-  };
+  } satisfies RunService;
 };

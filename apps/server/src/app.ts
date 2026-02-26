@@ -1,39 +1,31 @@
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { createId } from "@paralleldrive/cuid2";
-import {
-  createInMemoryChatMessageService,
-  type ChatMessageService,
-} from "./services/chat/message-service";
-import { createInMemoryChatRunService, type ChatRunService } from "./services/chat/run-service";
+import type { MessageService } from "./services/chat/message-service";
+import type { RunService } from "./services/chat/run-service";
 import type { ChatIngressService } from "./services/chat/ingress-service";
-import {
-  createEnvironmentChatModelCatalogService,
-  type ChatModelCatalogService,
-} from "./services/chat/model-catalog-service";
-import { EVENT_TYPE, parseCreateChatMessageRequest, type EventPublisher } from "./events/types";
 import type { RunLoopEventService } from "./services/chat/loop-event-service";
 import type { ChatRunPubSub } from "./services/chat/run-pubsub";
+import { EVENT_TYPE, parseCreateChatMessageRequest, type EventPublisher } from "./events/types";
+import { DEFAULT_MODEL } from "./lib/constants";
 
 interface CreateAppOptions {
-  publisher?: EventPublisher;
-  ingressService?: ChatIngressService;
-  messageService?: ChatMessageService;
-  runService?: ChatRunService;
-  modelCatalogService?: ChatModelCatalogService;
-  runLoopEventService?: RunLoopEventService;
-  pubsub?: ChatRunPubSub;
+  publisher: EventPublisher;
+  ingressService: ChatIngressService;
+  messageService: MessageService;
+  runService: RunService;
+  runLoopEventService: RunLoopEventService;
+  pubsub: ChatRunPubSub;
 }
 
 export const createApp = (options: CreateAppOptions) => {
   const app = new Hono();
   const pubsub = options.pubsub;
-  const messageService = options.messageService ?? createInMemoryChatMessageService();
-  const runService = options.runService ?? createInMemoryChatRunService(pubsub);
+  const messageService = options.messageService;
+  const runService = options.runService;
   const ingressService = options.ingressService;
   const runLoopEventService = options.runLoopEventService;
-  const modelCatalogService =
-    options.modelCatalogService ?? createEnvironmentChatModelCatalogService();
+
   const threadIdPattern = /^thr_[a-z0-9]{24}$/;
   const runIdPattern = /^run_[a-z0-9]{24}$/;
 
@@ -45,6 +37,7 @@ export const createApp = (options: CreateAppOptions) => {
     const body: unknown = await c.req.json().catch(() => {
       return;
     });
+
     const request = parseCreateChatMessageRequest(body);
 
     if (!request) {
@@ -58,29 +51,17 @@ export const createApp = (options: CreateAppOptions) => {
       );
     }
 
-    const modelResolution = modelCatalogService.resolveModel(request.model);
-    if (!modelResolution.model) {
-      return c.json(
-        {
-          ok: false,
-          error: modelResolution.error ?? "Unsupported model",
-        },
-        400,
-      );
-    }
-
-    const model = modelResolution.model;
-
     const threadId = request.threadId ?? `thr_${createId()}`;
     const runId = `run_${createId()}`;
     const correlationId = request.correlationId ?? crypto.randomUUID();
+    const model = request.model;
 
     const persistedMessage = ingressService
       ? await ingressService.createIncomingMessageAndQueueRun({
           threadId,
           runId,
           content: request.content,
-          model,
+          model: model ?? DEFAULT_MODEL,
           correlationId,
         })
       : await messageService.createIncomingMessage({
@@ -109,7 +90,7 @@ export const createApp = (options: CreateAppOptions) => {
           runId,
           threadId: persistedMessage.threadId,
           prompt: request.content,
-          model,
+          model: model ?? DEFAULT_MODEL,
         },
       });
     }
@@ -121,7 +102,7 @@ export const createApp = (options: CreateAppOptions) => {
         runId,
         threadId: persistedMessage.threadId,
         messageId: persistedMessage.messageId,
-        model,
+        model: model ?? DEFAULT_MODEL,
         correlationId,
       },
       202,

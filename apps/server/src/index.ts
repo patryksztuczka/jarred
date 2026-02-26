@@ -5,7 +5,6 @@ import { createDrizzleChatMessageService } from "./services/chat/message-service
 import { createDrizzleChatRunService } from "./services/chat/run-service";
 import { createDrizzleRunLoopEventService } from "./services/chat/loop-event-service";
 import { createAiSdkChatLlmService } from "./services/chat/llm-service";
-import { createEnvironmentChatModelCatalogService } from "./services/chat/model-catalog-service";
 import { OutboxPublisher } from "./events/outbox-publisher";
 import { createDrizzleOutboxService } from "./services/events/outbox-service";
 import { createOutboxPubSub } from "./services/events/outbox-pubsub";
@@ -19,7 +18,6 @@ const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
 const redisStreamKey = process.env.REDIS_STREAM_KEY ?? "agent_events";
 const redisConsumerGroup = process.env.REDIS_CONSUMER_GROUP ?? "agent_runtime";
 const redisConsumerName = process.env.REDIS_CONSUMER_NAME ?? `worker-${process.pid}`;
-const recentMessageCount = Number(process.env.CHAT_RECENT_MESSAGES ?? 10);
 
 const redis = new Redis(redisUrl);
 const bus = new RedisStreamBus(redis, {
@@ -27,7 +25,6 @@ const bus = new RedisStreamBus(redis, {
 });
 const runPubsub = createChatRunPubSub();
 const outboxPubsub = createOutboxPubSub();
-const modelCatalogService = createEnvironmentChatModelCatalogService();
 const llmService = createAiSdkChatLlmService();
 const messageService = createDrizzleChatMessageService(db);
 const runService = createDrizzleChatRunService(db, runPubsub);
@@ -39,16 +36,18 @@ const outboxPublisher = new OutboxPublisher({
   publisher: bus,
   pubsub: outboxPubsub,
 });
+
 const runtime = new AgentRuntime({
   bus,
   messageService,
   runService,
-  llmService: llmService,
+  llmService,
+  runLoopEventService,
   consumerGroup: redisConsumerGroup,
   consumerName: redisConsumerName,
-  defaultModel: modelCatalogService.getDefaultModel(),
-  recentMessageCount,
-  runLoopEventService,
+  model: "gpt-5-nano",
+  recentMessageCount: 10,
+  maxIterations: 5,
 });
 
 await runtime.init();
@@ -59,7 +58,6 @@ const app = createApp({
   ingressService,
   messageService,
   runService,
-  modelCatalogService,
   runLoopEventService,
   pubsub: runPubsub,
 });

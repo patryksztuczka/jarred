@@ -1,19 +1,22 @@
-import { type ChatLlmService, type ChatPromptMessage } from "../services/chat/llm-service";
-import type { ChatHistoryMessage, ChatMessageService } from "../services/chat/message-service";
+import {
+  type AssistantResponse,
+  type LlmService,
+  type ChatPromptMessage,
+} from "../services/chat/llm-service";
+import type { ChatHistoryMessage, MessageService } from "../services/chat/message-service";
 import type {
   AgentLoopStopReason,
   RunLoopEventService,
   RunLoopEventType,
 } from "../services/chat/loop-event-service";
 
-const DEFAULT_RECENT_MESSAGE_COUNT = 10;
-
 interface CreateAgentLoopOptions {
-  llmService: ChatLlmService;
-  messageService?: ChatMessageService;
-  defaultModel: string;
-  recentMessageCount?: number;
+  llmService: LlmService;
+  messageService: MessageService;
   runLoopEventService: RunLoopEventService;
+  model: string;
+  recentMessageCount: number;
+  maxIterations: number;
 }
 
 interface RunAgentLoopInput {
@@ -21,33 +24,32 @@ interface RunAgentLoopInput {
   threadId: string;
   correlationId: string;
   prompt: string;
-  model?: string;
 }
 
 export interface AgentLoopRunResult {
-  output?: string;
+  output?: AssistantResponse;
   reason: AgentLoopStopReason;
   error?: string;
 }
 
 export class AgentLoop {
-  private readonly llmService: ChatLlmService;
-  private readonly messageService?: ChatMessageService;
-  private readonly defaultModel: string;
-  private readonly recentMessageCount: number;
+  private readonly llmService: LlmService;
+  private readonly messageService: MessageService;
   private readonly runLoopEventService: RunLoopEventService;
+  private readonly model: string;
+  private readonly recentMessageCount: number;
+  private readonly maxIterations: number;
 
   public constructor(options: CreateAgentLoopOptions) {
     this.llmService = options.llmService;
     this.messageService = options.messageService;
-    this.defaultModel = options.defaultModel;
-    this.recentMessageCount = normalizeRecentMessageCount(options.recentMessageCount);
+    this.model = options.model;
+    this.recentMessageCount = options.recentMessageCount;
+    this.maxIterations = options.maxIterations;
     this.runLoopEventService = options.runLoopEventService;
   }
 
   public async run(input: RunAgentLoopInput) {
-    const model = input.model || this.defaultModel;
-
     await this.emitEvent({
       runId: input.runId,
       eventType: "loop.started",
@@ -71,20 +73,54 @@ export class AgentLoop {
         });
       }
 
-      const output = await this.llmService.generateAssistantResponse({
-        model,
-        messages: recentMessages,
-      });
+      let output: AssistantResponse | undefined;
+      let iterationsCalled = 0;
+
+      while (iterationsCalled < this.maxIterations) {
+        output = await this.llmService.generateAssistantResponse({
+          model: this.model,
+          messages: recentMessages,
+        });
+
+        iterationsCalled += 1;
+
+        console.log(output);
+
+        if (output.action !== "continue") {
+          await this.emitEvent({
+            runId: input.runId,
+            eventType: "loop.completed",
+            payload: { output, iterationsCalled },
+          });
+
+          return {
+            output,
+            reason: "success" as const,
+          } satisfies AgentLoopRunResult;
+        }
+
+        const continuationMessage = toAssistantContinuationMessage(output);
+        if (continuationMessage) {
+          recentMessages.push({
+            role: "assistant",
+            content: continuationMessage,
+          });
+        }
+      }
 
       await this.emitEvent({
         runId: input.runId,
         eventType: "loop.completed",
-        payload: { output },
+        payload: {
+          output,
+          iterationsCalled: this.maxIterations,
+          reason: "max_iterations_reached",
+        },
       });
 
       return {
         output,
-        reason: "success" as const,
+        reason: "max_iterations_reached" as const,
       } satisfies AgentLoopRunResult;
     } catch (error) {
       const safeError = error instanceof Error ? error.message : "unknown";
@@ -119,12 +155,17 @@ export class AgentLoop {
   }
 }
 
-const normalizeRecentMessageCount = (value: number | undefined) => {
-  if (!value || Number.isNaN(value)) {
-    return DEFAULT_RECENT_MESSAGE_COUNT;
+const toAssistantContinuationMessage = (output: AssistantResponse) => {
+  const response = output.response?.trim();
+  if (response && response.length > 0) {
+    return response;
   }
 
-  return Math.max(1, Math.floor(value));
+  if (output.toolExecutions.length > 0) {
+    return JSON.stringify(output.toolExecutions);
+  }
+
+  return undefined;
 };
 
 const toPromptMessage = (message: ChatHistoryMessage) => {

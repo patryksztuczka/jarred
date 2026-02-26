@@ -3,7 +3,7 @@ import type { LibSQLDatabase } from "drizzle-orm/libsql";
 import { runLoopEvents, type Schema } from "../../../db/schema";
 import type { ChatRunPubSub } from "./run-pubsub";
 
-export type AgentLoopStopReason = "success" | "error";
+export type AgentLoopStopReason = "success" | "max_iterations_reached" | "error";
 
 export type RunLoopEventType = "loop.started" | "loop.completed" | "loop.error";
 
@@ -83,37 +83,6 @@ export const createDrizzleRunLoopEventService = (
         payload: parsePayload(row.payload),
         createdAt: row.createdAt.toISOString(),
       } satisfies RunLoopEventRecord;
-    });
-  };
-
-  return {
-    appendEvent,
-    listByRunId,
-  } satisfies RunLoopEventService;
-};
-
-export const createInMemoryRunLoopEventService = (pubsub?: ChatRunPubSub) => {
-  const records = new Array<RunLoopEventRecord>();
-
-  const appendEvent = async (input: AppendRunLoopEventInput) => {
-    const record: RunLoopEventRecord = {
-      id: crypto.randomUUID(),
-      runId: input.runId,
-      eventType: input.eventType,
-      payload: input.payload,
-      createdAt: new Date().toISOString(),
-    };
-    records.push(record);
-
-    pubsub?.publish(input.runId, {
-      type: "run.event",
-      data: record,
-    });
-  };
-
-  const listByRunId = async (runId: string) => {
-    return records.filter((record) => {
-      return record.runId === runId;
     });
   };
 

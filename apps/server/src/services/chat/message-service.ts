@@ -28,7 +28,7 @@ export interface ChatHistoryMessage {
   createdAt: string;
 }
 
-export interface ChatMessageService {
+export interface MessageService {
   createIncomingMessage(input: CreateIncomingMessageInput): Promise<PersistedMessage>;
   createAssistantMessage(input: CreateAssistantMessageInput): Promise<PersistedMessage>;
   listMessagesByThreadId(threadId: string, limit?: number): Promise<ChatHistoryMessage[]>;
@@ -124,74 +124,5 @@ export const createDrizzleChatMessageService = (database: LibSQLDatabase<Schema>
     createIncomingMessage,
     createAssistantMessage,
     listMessagesByThreadId,
-  } satisfies ChatMessageService;
-};
-
-export const createInMemoryChatMessageService = () => {
-  const records = new Map<string, ChatHistoryMessage>();
-
-  const createIncomingMessage = async (input: CreateIncomingMessageInput) => {
-    const messageId = crypto.randomUUID();
-    const now = new Date().toISOString();
-    const record: ChatHistoryMessage = {
-      id: messageId,
-      threadId: input.threadId,
-      role: "user",
-      content: input.content,
-      correlationId: input.correlationId,
-      createdAt: now,
-    };
-
-    records.set(messageId, record);
-    return {
-      messageId,
-      threadId: input.threadId,
-    };
-  };
-
-  const createAssistantMessage = async (input: CreateAssistantMessageInput) => {
-    const messageId = crypto.randomUUID();
-    const now = new Date().toISOString();
-    const record: ChatHistoryMessage = {
-      id: messageId,
-      threadId: input.threadId,
-      role: "assistant",
-      content: input.content,
-      correlationId: input.correlationId,
-      createdAt: now,
-    };
-
-    records.set(messageId, record);
-    return {
-      messageId,
-      threadId: input.threadId,
-    };
-  };
-
-  const listMessagesByThreadId = async (threadId: string, limit?: number) => {
-    const threadRecords = [...records.values()].filter((record) => {
-      return record.threadId === threadId;
-    });
-
-    threadRecords.sort((a, b) => {
-      return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-    });
-
-    if (limit) {
-      return threadRecords.slice(-limit);
-    }
-
-    return threadRecords;
-  };
-
-  const getById = (messageId: string) => {
-    return records.get(messageId);
-  };
-
-  return {
-    createIncomingMessage,
-    createAssistantMessage,
-    listMessagesByThreadId,
-    getById,
-  };
+  } satisfies MessageService;
 };
