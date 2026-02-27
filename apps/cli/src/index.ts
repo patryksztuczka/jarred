@@ -8,12 +8,13 @@ interface ChatMessageAcceptedResponse {
   status: "accepted";
   runId: string;
   threadId: string;
-  correlationId: string;
+  messageId: string;
+  model: string;
 }
 
 interface RunLoopEventRecord {
   id: string;
-  eventType: string;
+  eventType: "loop.started" | "loop.completed" | "loop.error";
   payload: unknown;
 }
 
@@ -152,7 +153,7 @@ const sendMessage = async (inputData: {
   }
 
   const payload = (await response.json()) as Partial<ChatMessageAcceptedResponse>;
-  if (!payload.runId || !payload.threadId || !payload.correlationId) {
+  if (!payload.runId || !payload.threadId) {
     throw new Error("Invalid /api/chat/messages response shape");
   }
 
@@ -237,7 +238,7 @@ const waitForRunStream = async (inputData: { baseUrl: string; runId: string }) =
 
 const mapEventForDisplay = (event: RunLoopEventRecord) => {
   if (event.eventType === "loop.started") {
-    const prompt = getStringFromPayload(event.payload, ["prompt"]);
+    const prompt = getPromptContent(event.payload);
     if (!prompt) {
       return "Agent started processing";
     }
@@ -245,7 +246,7 @@ const mapEventForDisplay = (event: RunLoopEventRecord) => {
   }
 
   if (event.eventType === "loop.completed") {
-    const output = getStringFromPayload(event.payload, ["output"]);
+    const output = getOutputContent(event.payload);
     if (!output) {
       return "Agent completed";
     }
@@ -253,7 +254,7 @@ const mapEventForDisplay = (event: RunLoopEventRecord) => {
   }
 
   if (event.eventType === "loop.error") {
-    const error = getStringFromPayload(event.payload, ["error"]);
+    const error = getErrorContent(event.payload);
     if (!error) {
       return "Agent error";
     }
@@ -261,40 +262,83 @@ const mapEventForDisplay = (event: RunLoopEventRecord) => {
   }
 };
 
-const getStringFromPayload = (payload: unknown, path: string[]) => {
+const getErrorContent = (payload: unknown) => {
   if (!payload || typeof payload !== "object") {
     return;
   }
 
   const payloadRecord = payload as Record<string, unknown>;
+  const error = payloadRecord.error;
+  return typeof error === "string" ? error : undefined;
+};
 
-  if (path.length === 1 && path[0]) {
-    const value = payloadRecord[path[0]];
-    if (typeof value !== "string") {
-      return;
-    }
-    return value;
-  }
-
-  const p0 = path[0];
-  const p1 = path[1];
-
-  if (!p0 || !p1) {
+const getPromptContent = (payload: unknown) => {
+  if (!payload || typeof payload !== "object") {
     return;
   }
 
-  const first = payloadRecord[p0];
-  if (!first || typeof first !== "object") {
+  const payloadRecord = payload as Record<string, unknown>;
+  const prompt = payloadRecord.prompt;
+
+  if (typeof prompt === "string") {
+    return prompt;
+  }
+
+  if (!prompt || typeof prompt !== "object") {
     return;
   }
 
-  const firstRecord = first as Record<string, unknown>;
-  const value = firstRecord[p1];
-  if (typeof value !== "string") {
+  const promptRecord = prompt as Record<string, unknown>;
+  const content = promptRecord.content;
+  return toContentString(content);
+};
+
+const getOutputContent = (payload: unknown) => {
+  if (!payload || typeof payload !== "object") {
     return;
   }
 
-  return value;
+  const payloadRecord = payload as Record<string, unknown>;
+  const output = payloadRecord.output;
+
+  if (typeof output === "string") {
+    return output;
+  }
+
+  if (!output || typeof output !== "object") {
+    return;
+  }
+
+  const outputRecord = output as Record<string, unknown>;
+  return toContentString(outputRecord.response);
+};
+
+const toContentString = (content: unknown) => {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (!Array.isArray(content)) {
+    return;
+  }
+
+  const textParts = content
+    .filter((item) => {
+      return Boolean(item && typeof item === "object" && "type" in item && "text" in item);
+    })
+    .map((item) => {
+      const text = (item as { text: unknown }).text;
+      return typeof text === "string" ? text : "";
+    })
+    .filter((text) => {
+      return text.length > 0;
+    });
+
+  if (textParts.length === 0) {
+    return;
+  }
+
+  return textParts.join(" ");
 };
 
 await run().catch((error: unknown) => {

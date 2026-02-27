@@ -1,3 +1,4 @@
+import type { ModelMessage } from "ai";
 import { z } from "zod";
 
 export const EVENT_TYPE = {
@@ -11,14 +12,12 @@ export type AgentEventType = (typeof EVENT_TYPE)[keyof typeof EVENT_TYPE];
 export interface AgentRunRequestedPayload {
   runId: string;
   threadId: string;
-  prompt: string;
+  message: ModelMessage;
   model: string;
-  simulateFailure?: boolean;
 }
 
 export interface AgentRunCompletedPayload {
   requestEventId: string;
-  output: string;
 }
 
 export interface AgentRunFailedPayload {
@@ -36,7 +35,6 @@ export interface AgentEvent<TType extends AgentEventType = AgentEventType> {
   id: string;
   type: TType;
   timestamp: string;
-  correlationId: string;
   payload: AgentEventPayloadByType[TType];
 }
 
@@ -52,7 +50,6 @@ export const createChatMessageRequestSchema = z.object({
     .optional(),
   content: z.string().trim().min(1),
   model: z.string().trim().min(1).max(100).optional(),
-  correlationId: z.string().optional(),
 });
 
 export type CreateChatMessageRequest = z.infer<typeof createChatMessageRequestSchema>;

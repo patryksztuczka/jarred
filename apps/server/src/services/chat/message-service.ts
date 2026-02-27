@@ -1,17 +1,16 @@
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
 import { asc, desc, eq } from "drizzle-orm";
 import { messages, threads, type Schema } from "../../../db/schema";
+import type { ModelMessage } from "ai";
 
 interface CreateIncomingMessageInput {
   threadId: string;
   content: string;
-  correlationId: string;
 }
 
 interface CreateAssistantMessageInput {
   threadId: string;
   content: string;
-  correlationId: string;
 }
 
 interface PersistedMessage {
@@ -19,19 +18,10 @@ interface PersistedMessage {
   threadId: string;
 }
 
-export interface ChatHistoryMessage {
-  id: string;
-  threadId: string;
-  role: "user" | "assistant" | "system";
-  content: string;
-  correlationId: string;
-  createdAt: string;
-}
-
 export interface MessageService {
   createIncomingMessage(input: CreateIncomingMessageInput): Promise<PersistedMessage>;
   createAssistantMessage(input: CreateAssistantMessageInput): Promise<PersistedMessage>;
-  listMessagesByThreadId(threadId: string, limit?: number): Promise<ChatHistoryMessage[]>;
+  listMessagesByThreadId(threadId: string, limit?: number): Promise<ModelMessage[]>;
 }
 
 export const createDrizzleChatMessageService = (database: LibSQLDatabase<Schema>) => {
@@ -52,7 +42,6 @@ export const createDrizzleChatMessageService = (database: LibSQLDatabase<Schema>
       threadId: input.threadId,
       role: "user",
       content: input.content,
-      correlationId: input.correlationId,
     });
 
     return {
@@ -78,7 +67,6 @@ export const createDrizzleChatMessageService = (database: LibSQLDatabase<Schema>
       threadId: input.threadId,
       role: "assistant",
       content: input.content,
-      correlationId: input.correlationId,
     });
 
     return {
@@ -94,8 +82,6 @@ export const createDrizzleChatMessageService = (database: LibSQLDatabase<Schema>
         threadId: messages.threadId,
         role: messages.role,
         content: messages.content,
-        correlationId: messages.correlationId,
-        createdAt: messages.createdAt,
       })
       .from(messages)
       .where(eq(messages.threadId, threadId));
@@ -106,18 +92,7 @@ export const createDrizzleChatMessageService = (database: LibSQLDatabase<Schema>
 
     const results = await query;
 
-    const mapped = results.map((result) => {
-      return {
-        id: result.id,
-        threadId: result.threadId,
-        role: result.role,
-        content: result.content,
-        correlationId: result.correlationId,
-        createdAt: result.createdAt.toISOString(),
-      };
-    });
-
-    return limit ? mapped.toReversed() : mapped;
+    return limit ? results.toReversed() : results;
   };
 
   return {

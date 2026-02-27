@@ -1,17 +1,27 @@
+import { tool } from "ai";
 import z from "zod";
 
-const WEATHER_DESCRIPTION_BY_CITY = {
-  madrid: "Sunny and dry with a light breeze.",
-  "new york": "Cloudy with occasional light rain.",
-  poznan: "Cool and overcast with a chance of drizzle.",
-} as const;
-
-export const getWeatherByCityTool = (city: string) => {
-  const parseResult = z.enum(Object.keys(WEATHER_DESCRIPTION_BY_CITY)).safeParse(city);
-
-  if (parseResult.success) {
-    return WEATHER_DESCRIPTION_BY_CITY[parseResult.data];
+const getWeatherByCity = ({ city }: { city: string }) => {
+  switch (city) {
+    case "madrid": {
+      return "Sunny and dry with a light breeze.";
+    }
+    case "new york": {
+      return "Cloudy with occasional light rain.";
+    }
+    case "poznan": {
+      return "Cool and overcast with a chance of drizzle.";
+    }
+    default: {
+      return "Passed city is currently unsupported by this tool.";
+    }
   }
-
-  return "Passed city is currently unsupported by this tool.";
 };
+
+export const getWeather = tool({
+  description: "Get the weather for a location",
+  inputSchema: z.object({
+    city: z.string().describe("The city to get the weather for"),
+  }),
+  execute: getWeatherByCity,
+});

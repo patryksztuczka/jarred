@@ -1,4 +1,6 @@
+import type { ModelMessage } from "ai";
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
+
 import { messages, outboxEvents, runs, threads, type Schema } from "../../../db/schema";
 import { EVENT_TYPE, type AgentEvent } from "../../events/types";
 import type { OutboxPubSub } from "../events/outbox-pubsub";
@@ -6,10 +8,8 @@ import type { OutboxPubSub } from "../events/outbox-pubsub";
 interface CreateIncomingMessageAndQueueRunInput {
   threadId: string;
   runId: string;
-  content: string;
   model: string;
-  correlationId: string;
-  eventId?: string;
+  message: ModelMessage;
 }
 
 interface PersistedIngressRecord {
@@ -17,7 +17,6 @@ interface PersistedIngressRecord {
   threadId: string;
   runId: string;
   model: string;
-  correlationId: string;
 }
 
 export interface ChatIngressService {
@@ -28,19 +27,18 @@ export interface ChatIngressService {
 
 export const createDrizzleChatIngressService = (
   database: LibSQLDatabase<Schema>,
-  pubsub?: OutboxPubSub,
+  pubsub: OutboxPubSub,
 ) => {
   const createIncomingMessageAndQueueRun = async (input: CreateIncomingMessageAndQueueRunInput) => {
     const messageId = crypto.randomUUID();
     const event: AgentEvent<typeof EVENT_TYPE.AGENT_RUN_REQUESTED> = {
-      id: input.eventId ?? crypto.randomUUID(),
+      id: crypto.randomUUID(),
       type: EVENT_TYPE.AGENT_RUN_REQUESTED,
       timestamp: new Date().toISOString(),
-      correlationId: input.correlationId,
       payload: {
         runId: input.runId,
         threadId: input.threadId,
-        prompt: input.content,
+        message: input.message,
         model: input.model,
       },
     };
@@ -58,17 +56,14 @@ export const createDrizzleChatIngressService = (
       await transaction.insert(messages).values({
         id: messageId,
         threadId: input.threadId,
-        role: "user",
-        content: input.content,
-        correlationId: input.correlationId,
+        role: input.message.role,
+        content: input.message.content,
       });
 
       await transaction.insert(runs).values({
         id: input.runId,
         threadId: input.threadId,
-        correlationId: input.correlationId,
         status: "queued",
-        safeError: undefined,
       });
 
       await transaction.insert(outboxEvents).values({
@@ -82,37 +77,14 @@ export const createDrizzleChatIngressService = (
       });
     });
 
-    pubsub?.publish({ type: "outbox.event_created" });
+    pubsub.publish({ type: "outbox.event_created" });
 
     return {
       messageId,
       threadId: input.threadId,
       runId: input.runId,
       model: input.model,
-      correlationId: input.correlationId,
     } satisfies PersistedIngressRecord;
-  };
-
-  return {
-    createIncomingMessageAndQueueRun,
-  } satisfies ChatIngressService;
-};
-
-export const createInMemoryChatIngressService = () => {
-  const records = new Map<string, PersistedIngressRecord>();
-
-  const createIncomingMessageAndQueueRun = async (input: CreateIncomingMessageAndQueueRunInput) => {
-    const messageId = crypto.randomUUID();
-    const next = {
-      messageId,
-      threadId: input.threadId,
-      runId: input.runId,
-      model: input.model,
-      correlationId: input.correlationId,
-    } satisfies PersistedIngressRecord;
-
-    records.set(messageId, next);
-    return next;
   };
 
   return {

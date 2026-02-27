@@ -50,7 +50,16 @@ export const createDrizzleOutboxService = (
 
   const listRetryableEvents = async (limit: number) => {
     const results = await database
-      .select()
+      .select({
+        id: outboxEvents.id,
+        payload: outboxEvents.payload,
+        status: outboxEvents.status,
+        attempts: outboxEvents.attempts,
+        lastError: outboxEvents.lastError,
+        publishedAt: outboxEvents.publishedAt,
+        createdAt: outboxEvents.createdAt,
+        updatedAt: outboxEvents.updatedAt,
+      })
       .from(outboxEvents)
       .where(inArray(outboxEvents.status, RETRYABLE_STATUSES))
       .orderBy(asc(outboxEvents.createdAt))

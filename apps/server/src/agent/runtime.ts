@@ -75,6 +75,18 @@ export class AgentRuntime {
     this.isRunning = false;
   }
 
+  private async poll() {
+    while (this.isRunning) {
+      try {
+        await this.processOnce();
+      } catch (error) {
+        this.logger.error("runtime.poll.error", {
+          error: error instanceof Error ? error.message : "unknown",
+        });
+      }
+    }
+  }
+
   public async processOnce() {
     const entries = await this.bus.readGroup(this.consumerGroup, this.consumerName);
     if (entries.length === 0) {
@@ -86,18 +98,6 @@ export class AgentRuntime {
     }
 
     return entries.length;
-  }
-
-  private async poll() {
-    while (this.isRunning) {
-      try {
-        await this.processOnce();
-      } catch (error) {
-        this.logger.error("runtime.poll.error", {
-          error: error instanceof Error ? error.message : "unknown",
-        });
-      }
-    }
   }
 
   private async processEntry(streamEntryId: string, event: AgentEvent) {
@@ -112,23 +112,18 @@ export class AgentRuntime {
     try {
       await this.updateRunStatus(payload.runId, "processing");
       const completedEvent = await this.buildCompletedEvent(requestedEvent);
-      await this.persistAssistantMessage(requestedEvent, completedEvent.payload.output);
       await this.bus.publish(completedEvent);
       await this.updateRunStatus(payload.runId, "completed");
-
       this.logger.info("runtime.event.processed", {
         eventId: event.id,
-        correlationId: event.correlationId,
       });
     } catch (error) {
       const safeError = this.getSafeErrorMessage(error);
       const failedEvent = this.buildFailedEvent(requestedEvent, safeError);
       await this.bus.publish(failedEvent);
       await this.updateRunStatus(payload.runId, "failed", safeError);
-
       this.logger.error("runtime.event.failed", {
         eventId: event.id,
-        correlationId: event.correlationId,
       });
     } finally {
       await this.bus.acknowledge(this.consumerGroup, streamEntryId);
@@ -136,10 +131,6 @@ export class AgentRuntime {
   }
 
   private async updateRunStatus(runId: string, status: RunStatus, safeError?: string) {
-    if (!this.runService) {
-      return;
-    }
-
     await this.runService.updateRunStatus({
       runId,
       status,
@@ -150,38 +141,20 @@ export class AgentRuntime {
   private async buildCompletedEvent(event: AgentEvent<typeof EVENT_TYPE.AGENT_RUN_REQUESTED>) {
     const payload = event.payload;
 
-    if (payload.simulateFailure) {
-      throw new Error("Simulated runtime failure");
-    }
-
-    const loopResult = await this.agentLoop.run({
+    await this.agentLoop.run({
       runId: payload.runId,
       threadId: payload.threadId,
-      correlationId: event.correlationId,
-      prompt: payload.prompt,
+      message: payload.message,
     });
 
-    if (loopResult.reason !== "success") {
-      throw new Error(loopResult.error || "Agent loop stopped.");
-    }
-
-    if (!loopResult.output) {
-      throw new Error("Agent loop returned empty output.");
-    }
-
-    const outputText = this.getAssistantResponseText(loopResult.output);
-    if (!outputText) {
-      throw new Error("Agent loop returned empty output.");
-    }
+    // TODO: Handle loop result
 
     return {
       id: crypto.randomUUID(),
       type: EVENT_TYPE.AGENT_RUN_COMPLETED,
       timestamp: new Date().toISOString(),
-      correlationId: event.correlationId,
       payload: {
         requestEventId: event.id,
-        output: outputText,
       },
     };
   }
@@ -190,16 +163,11 @@ export class AgentRuntime {
     event: AgentEvent<typeof EVENT_TYPE.AGENT_RUN_REQUESTED>,
     output: string,
   ) {
-    if (!this.messageService) {
-      return;
-    }
-
     const payload = event.payload as AgentRunRequestedPayload;
 
     await this.messageService.createAssistantMessage({
       threadId: payload.threadId,
       content: output,
-      correlationId: event.correlationId,
     });
   }
 
@@ -211,7 +179,6 @@ export class AgentRuntime {
       id: crypto.randomUUID(),
       type: EVENT_TYPE.AGENT_RUN_FAILED,
       timestamp: new Date().toISOString(),
-      correlationId: event.correlationId,
       payload: {
         requestEventId: event.id,
         error: safeError,
@@ -231,15 +198,6 @@ export class AgentRuntime {
     const text = output.response?.trim();
     if (text && text.length > 0) {
       return text;
-    }
-
-    const latestExecution = output.toolExecutions.at(-1);
-    if (latestExecution?.result) {
-      if (typeof latestExecution.result === "string") {
-        return latestExecution.result;
-      }
-
-      return JSON.stringify(latestExecution.result);
     }
 
     return undefined;

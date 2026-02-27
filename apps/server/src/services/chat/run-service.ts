@@ -9,7 +9,6 @@ export type RunStatus = "queued" | "processing" | "completed" | "failed";
 export interface ChatRun {
   id: string;
   threadId: string;
-  correlationId: string;
   status: RunStatus;
   safeError?: string;
   createdAt: string;
@@ -19,7 +18,6 @@ export interface ChatRun {
 interface CreateQueuedRunInput {
   id: string;
   threadId: string;
-  correlationId: string;
 }
 
 interface UpdateRunStatusInput {
@@ -51,9 +49,8 @@ export const createDrizzleChatRunService = (
     await database.insert(runs).values({
       id: input.id,
       threadId: input.threadId,
-      correlationId: input.correlationId,
       status: "queued",
-      safeError: undefined,
+      error: undefined,
     });
 
     const run = await getRunById(input.id);
@@ -72,7 +69,7 @@ export const createDrizzleChatRunService = (
       .update(runs)
       .set({
         status: input.status,
-        safeError,
+        error: safeError,
         updatedAt: new Date(),
       })
       .where(eq(runs.id, input.runId));
@@ -89,9 +86,8 @@ export const createDrizzleChatRunService = (
       .select({
         id: runs.id,
         threadId: runs.threadId,
-        correlationId: runs.correlationId,
         status: runs.status,
-        safeError: runs.safeError,
+        safeError: runs.error,
         createdAt: runs.createdAt,
         updatedAt: runs.updatedAt,
       })
@@ -107,7 +103,6 @@ export const createDrizzleChatRunService = (
     return {
       id: first.id,
       threadId: first.threadId,
-      correlationId: first.correlationId,
       status: first.status,
       safeError: first.safeError ?? undefined,
       createdAt: first.createdAt.toISOString(),

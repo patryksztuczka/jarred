@@ -116,7 +116,6 @@ export class OutboxPublisher {
 
         this.logger.info("outbox.publish.success", {
           eventId: outboxEvent.id,
-          correlationId: outboxEvent.event.correlationId,
         });
       } catch (error) {
         const safeMessage = error instanceof Error ? error.message : "unknown";
@@ -124,7 +123,6 @@ export class OutboxPublisher {
 
         this.logger.error("outbox.publish.failed", {
           eventId: outboxEvent.id,
-          correlationId: outboxEvent.event.correlationId,
           error: safeMessage,
         });
       }

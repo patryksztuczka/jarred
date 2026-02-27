@@ -1,14 +1,11 @@
-import {
-  type AssistantResponse,
-  type LlmService,
-  type ChatPromptMessage,
-} from "../services/chat/llm-service";
-import type { ChatHistoryMessage, MessageService } from "../services/chat/message-service";
+import { type AssistantResponse, type LlmService } from "../services/chat/llm-service";
+import type { MessageService } from "../services/chat/message-service";
 import type {
   AgentLoopStopReason,
   RunLoopEventService,
   RunLoopEventType,
 } from "../services/chat/loop-event-service";
+import type { ModelMessage } from "ai";
 
 interface CreateAgentLoopOptions {
   llmService: LlmService;
@@ -22,8 +19,7 @@ interface CreateAgentLoopOptions {
 interface RunAgentLoopInput {
   runId: string;
   threadId: string;
-  correlationId: string;
-  prompt: string;
+  message: ModelMessage;
 }
 
 export interface AgentLoopRunResult {
@@ -53,25 +49,14 @@ export class AgentLoop {
     await this.emitEvent({
       runId: input.runId,
       eventType: "loop.started",
-      payload: { threadId: input.threadId, prompt: input.prompt },
+      payload: { threadId: input.threadId, prompt: input.message },
     });
 
     try {
-      const threadMessages = await this.getThreadMessages(input.threadId, this.recentMessageCount);
-      const recentMessages = threadMessages.map((message) => {
-        return toPromptMessage(message);
-      });
-
-      const hasCurrentPromptMessage = threadMessages.some((message) => {
-        return message.correlationId === input.correlationId && message.role === "user";
-      });
-
-      if (!hasCurrentPromptMessage) {
-        recentMessages.push({
-          role: "user",
-          content: input.prompt,
-        });
-      }
+      const recentMessages = await this.messageService.listMessagesByThreadId(
+        input.threadId,
+        this.recentMessageCount,
+      );
 
       let output: AssistantResponse | undefined;
       let iterationsCalled = 0;
@@ -79,41 +64,62 @@ export class AgentLoop {
       while (iterationsCalled < this.maxIterations) {
         output = await this.llmService.generateAssistantResponse({
           model: this.model,
-          messages: recentMessages,
+          messages: [...recentMessages, input.message],
         });
 
         iterationsCalled += 1;
 
-        console.log(output);
-
-        if (output.action !== "continue") {
-          await this.emitEvent({
-            runId: input.runId,
-            eventType: "loop.completed",
-            payload: { output, iterationsCalled },
-          });
-
-          return {
-            output,
-            reason: "success" as const,
-          } satisfies AgentLoopRunResult;
+        if (output.action === "finish") {
+          break;
         }
 
-        const continuationMessage = toAssistantContinuationMessage(output);
-        if (continuationMessage) {
-          recentMessages.push({
-            role: "assistant",
-            content: continuationMessage,
-          });
-        }
+        await this.messageService.createAssistantMessage({
+          threadId: input.threadId,
+          content: output.response ?? "No content",
+        });
+
+        recentMessages.push({
+          role: "assistant",
+          content: output.response ?? "No content",
+        });
       }
+
+      if (!output) {
+        throw new Error("Loop finished without assistant output");
+      }
+
+      if (output.action === "finish") {
+        await this.messageService.createAssistantMessage({
+          threadId: input.threadId,
+          content: output.response ?? "No content",
+        });
+
+        await this.emitEvent({
+          runId: input.runId,
+          eventType: "loop.completed",
+          payload: {
+            output,
+            iterationsCalled,
+          },
+        });
+
+        return {
+          output,
+          reason: "success" as const,
+        } satisfies AgentLoopRunResult;
+      }
+
+      await this.messageService.createAssistantMessage({
+        threadId: input.threadId,
+        content: output.response ?? "No content",
+      });
 
       await this.emitEvent({
         runId: input.runId,
         eventType: "loop.completed",
         payload: {
           output,
-          iterationsCalled: this.maxIterations,
+          iterationsCalled,
           reason: "max_iterations_reached",
         },
       });
@@ -138,14 +144,6 @@ export class AgentLoop {
     }
   }
 
-  private async getThreadMessages(threadId: string, limit?: number) {
-    if (!this.messageService) {
-      return [];
-    }
-
-    return this.messageService.listMessagesByThreadId(threadId, limit);
-  }
-
   private async emitEvent(input: { runId: string; eventType: RunLoopEventType; payload: unknown }) {
     await this.runLoopEventService.appendEvent({
       runId: input.runId,
@@ -154,23 +152,3 @@ export class AgentLoop {
     });
   }
 }
-
-const toAssistantContinuationMessage = (output: AssistantResponse) => {
-  const response = output.response?.trim();
-  if (response && response.length > 0) {
-    return response;
-  }
-
-  if (output.toolExecutions.length > 0) {
-    return JSON.stringify(output.toolExecutions);
-  }
-
-  return undefined;
-};
-
-const toPromptMessage = (message: ChatHistoryMessage) => {
-  return {
-    role: message.role,
-    content: message.content,
-  } satisfies ChatPromptMessage;
-};

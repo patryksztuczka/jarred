@@ -6,7 +6,7 @@ import type { RunService } from "./services/chat/run-service";
 import type { ChatIngressService } from "./services/chat/ingress-service";
 import type { RunLoopEventService } from "./services/chat/loop-event-service";
 import type { ChatRunPubSub } from "./services/chat/run-pubsub";
-import { EVENT_TYPE, parseCreateChatMessageRequest, type EventPublisher } from "./events/types";
+import { parseCreateChatMessageRequest, type EventPublisher } from "./events/types";
 import { DEFAULT_MODEL } from "./lib/constants";
 
 interface CreateAppOptions {
@@ -53,47 +53,17 @@ export const createApp = (options: CreateAppOptions) => {
 
     const threadId = request.threadId ?? `thr_${createId()}`;
     const runId = `run_${createId()}`;
-    const correlationId = request.correlationId ?? crypto.randomUUID();
     const model = request.model;
 
-    const persistedMessage = ingressService
-      ? await ingressService.createIncomingMessageAndQueueRun({
-          threadId,
-          runId,
-          content: request.content,
-          model: model ?? DEFAULT_MODEL,
-          correlationId,
-        })
-      : await messageService.createIncomingMessage({
-          threadId,
-          content: request.content,
-          correlationId,
-        });
-
-    if (!ingressService) {
-      await runService.createQueuedRun({
-        id: runId,
-        threadId,
-        correlationId,
-      });
-
-      if (!options.publisher) {
-        throw new Error("publisher is required when ingressService is not configured");
-      }
-
-      await options.publisher.publish({
-        id: crypto.randomUUID(),
-        type: EVENT_TYPE.AGENT_RUN_REQUESTED,
-        timestamp: new Date().toISOString(),
-        correlationId,
-        payload: {
-          runId,
-          threadId: persistedMessage.threadId,
-          prompt: request.content,
-          model: model ?? DEFAULT_MODEL,
-        },
-      });
-    }
+    const persistedMessage = await ingressService.createIncomingMessageAndQueueRun({
+      threadId,
+      runId,
+      message: {
+        role: "user",
+        content: request.content,
+      },
+      model: model ?? DEFAULT_MODEL,
+    });
 
     return c.json(
       {
@@ -103,7 +73,6 @@ export const createApp = (options: CreateAppOptions) => {
         threadId: persistedMessage.threadId,
         messageId: persistedMessage.messageId,
         model: model ?? DEFAULT_MODEL,
-        correlationId,
       },
       202,
     );
@@ -227,9 +196,7 @@ export const createApp = (options: CreateAppOptions) => {
         if (existingRun.status === "completed") {
           const messages = await messageService.listMessagesByThreadId(existingRun.threadId);
           const reply = messages.toReversed().find((message) => {
-            return (
-              message.role === "assistant" && message.correlationId === existingRun.correlationId
-            );
+            return message.role === "assistant";
           });
           if (reply) {
             await stream.writeSSE({
@@ -266,10 +233,7 @@ export const createApp = (options: CreateAppOptions) => {
               if (event.data.status === "completed") {
                 const messages = await messageService.listMessagesByThreadId(event.data.threadId);
                 const reply = messages.toReversed().find((message) => {
-                  return (
-                    message.role === "assistant" &&
-                    message.correlationId === event.data.correlationId
-                  );
+                  return message.role === "assistant";
                 });
                 if (reply) {
                   await stream.writeSSE({
