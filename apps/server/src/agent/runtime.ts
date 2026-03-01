@@ -195,8 +195,19 @@ export class AgentRuntime {
   }
 
   private getAssistantResponseText(output: AssistantResponse) {
-    const text = output.response?.trim();
-    if (text && text.length > 0) {
+    if (output.message.role !== "assistant") {
+      return undefined;
+    }
+
+    const text =
+      typeof output.message.content === "string"
+        ? output.message.content.trim()
+        : output.message.content
+            .flatMap((part) => (part.type === "text" ? [part.text] : []))
+            .join("\n")
+            .trim();
+
+    if (text.length > 0) {
       return text;
     }
 

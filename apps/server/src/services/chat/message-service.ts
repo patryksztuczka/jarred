@@ -78,8 +78,6 @@ export const createDrizzleChatMessageService = (database: LibSQLDatabase<Schema>
   const listMessagesByThreadId = async (threadId: string, limit?: number) => {
     let query = database
       .select({
-        id: messages.id,
-        threadId: messages.threadId,
         role: messages.role,
         content: messages.content,
       })

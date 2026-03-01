@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.26",
+    "@langfuse/client": "^4.6.1",
     "@langfuse/otel": "^4.6.1",
     "@langfuse/tracing": "^4.6.1",
     "@libsql/client": "^0.15.15",

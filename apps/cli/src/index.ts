@@ -245,14 +245,6 @@ const mapEventForDisplay = (event: RunLoopEventRecord) => {
     return `Agent started: "${prompt}"`;
   }
 
-  if (event.eventType === "loop.completed") {
-    const output = getOutputContent(event.payload);
-    if (!output) {
-      return "Agent completed";
-    }
-    return `Agent completed: "${output.slice(0, 100)}${output.length > 100 ? "..." : ""}"`;
-  }
-
   if (event.eventType === "loop.error") {
     const error = getErrorContent(event.payload);
     if (!error) {

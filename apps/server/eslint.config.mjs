@@ -27,6 +27,7 @@ export default defineConfig(
       "unicorn/filename-case": "off",
       "unicorn/prevent-abbreviations": "off",
       "unicorn/no-useless-undefined": "off",
+      "unicorn/no-null": "off",
     },
   },
   eslintConfigPrettier,

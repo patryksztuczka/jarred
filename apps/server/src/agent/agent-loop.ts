@@ -5,7 +5,7 @@ import type {
   RunLoopEventService,
   RunLoopEventType,
 } from "../services/chat/loop-event-service";
-import type { ModelMessage } from "ai";
+import type { AssistantModelMessage, ModelMessage, ToolModelMessage } from "ai";
 
 interface CreateAgentLoopOptions {
   llmService: LlmService;
@@ -57,6 +57,7 @@ export class AgentLoop {
         input.threadId,
         this.recentMessageCount,
       );
+      const promptMessages = recentMessages.length > 0 ? recentMessages : [input.message];
 
       let output: AssistantResponse | undefined;
       let iterationsCalled = 0;
@@ -64,20 +65,17 @@ export class AgentLoop {
       do {
         output = await this.llmService.generateAssistantResponse({
           model: this.model,
-          messages: [...recentMessages, input.message],
+          messages: promptMessages,
         });
 
         iterationsCalled += 1;
 
         await this.messageService.createAssistantMessage({
           threadId: input.threadId,
-          content: output.response ?? "No content",
+          content: this.getPersistedMessageContent(output.message),
         });
 
-        recentMessages.push({
-          role: "assistant",
-          content: output.response ?? "No content",
-        });
+        promptMessages.push(output.message);
       } while (iterationsCalled < this.maxIterations && output.action === "continue");
 
       if (!output) {
@@ -121,5 +119,76 @@ export class AgentLoop {
       eventType: input.eventType,
       payload: input.payload,
     });
+  }
+
+  private getAssistantMessageText(message: AssistantModelMessage) {
+    if (typeof message.content === "string") {
+      return message.content;
+    }
+
+    const textContent = message.content
+      .flatMap((part) => (part.type === "text" ? [part.text] : []))
+      .join("\n")
+      .trim();
+
+    return textContent.length > 0 ? textContent : "No content";
+  }
+
+  private getPersistedMessageContent(message: AssistantModelMessage | ToolModelMessage) {
+    if (message.role === "assistant") {
+      return this.getAssistantMessageText(message);
+    }
+
+    const toolCalls = message.content
+      .flatMap((part) => {
+        if (part.type !== "tool-result") {
+          return [];
+        }
+
+        const payload = this.getToolPayload(part.output);
+
+        return [
+          {
+            toolName: part.toolName,
+            args: payload?.args ?? null,
+            output: payload?.output ?? part.output,
+          },
+        ];
+      })
+      .filter((entry) => entry.toolName.length > 0);
+
+    return JSON.stringify(toolCalls);
+  }
+
+  private getToolPayload(output: unknown) {
+    if (!this.isRecord(output) || output.type !== "text") {
+      return undefined;
+    }
+
+    if (typeof output.value !== "string") {
+      return undefined;
+    }
+
+    const parsedPayload = this.safeJsonParse(output.value);
+    if (!this.isRecord(parsedPayload)) {
+      return undefined;
+    }
+
+    return {
+      args: parsedPayload.args,
+      output: parsedPayload.output,
+    };
+  }
+
+  private isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null;
+  }
+
+  private safeJsonParse(value: string) {
+    try {
+      return JSON.parse(value) as unknown;
+    } catch {
+      return undefined;
+    }
   }
 }
