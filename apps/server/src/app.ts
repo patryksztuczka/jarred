@@ -1,33 +1,29 @@
 import { Hono } from "hono";
-import { streamSSE } from "hono/streaming";
 import { createId } from "@paralleldrive/cuid2";
-import type { MessageService } from "./services/chat/message-service";
-import type { RunService } from "./services/chat/run-service";
-import type { ChatIngressService } from "./services/chat/ingress-service";
-import type { RunLoopEventService } from "./services/chat/loop-event-service";
-import type { ChatRunPubSub } from "./services/chat/run-pubsub";
-import { parseCreateChatMessageRequest, type EventPublisher } from "./events/types";
+import {
+  createChatMessageRequestSchema,
+  type MessageService,
+} from "./modules/messages/messages-schemas";
 import { DEFAULT_MODEL } from "./lib/constants";
+import type { EventBus } from "./event-bus/redis-stream";
+import { EVENT_TYPE } from "./event-bus/types";
+import type { RunService } from "./modules/runs/runs-schemas";
+
+export { websocket } from "hono/bun";
 
 interface CreateAppOptions {
-  publisher: EventPublisher;
-  ingressService: ChatIngressService;
+  eventBus: EventBus;
   messageService: MessageService;
   runService: RunService;
-  runLoopEventService: RunLoopEventService;
-  pubsub: ChatRunPubSub;
 }
 
 export const createApp = (options: CreateAppOptions) => {
   const app = new Hono();
-  const pubsub = options.pubsub;
   const messageService = options.messageService;
+  const eventBus = options.eventBus;
   const runService = options.runService;
-  const ingressService = options.ingressService;
-  const runLoopEventService = options.runLoopEventService;
 
   const threadIdPattern = /^thr_[a-z0-9]{24}$/;
-  const runIdPattern = /^run_[a-z0-9]{24}$/;
 
   app.get("/api", (c) => {
     return c.json({ ok: true, message: "API is running" });
@@ -38,9 +34,9 @@ export const createApp = (options: CreateAppOptions) => {
       return;
     });
 
-    const request = parseCreateChatMessageRequest(body);
+    const parsedRequest = createChatMessageRequestSchema.safeParse(body);
 
-    if (!request) {
+    if (!parsedRequest.success) {
       return c.json(
         {
           ok: false,
@@ -51,18 +47,36 @@ export const createApp = (options: CreateAppOptions) => {
       );
     }
 
+    const request = parsedRequest.data;
+
     const threadId = request.threadId ?? `thr_${createId()}`;
     const runId = `run_${createId()}`;
     const model = request.model;
 
-    const persistedMessage = await ingressService.createIncomingMessageAndQueueRun({
+    const persistedMessage = await messageService.createIncomingMessage({
       threadId,
+      content: request.content,
+    });
+
+    await runService.createQueuedRun({
       runId,
-      message: {
-        role: "user",
-        content: request.content,
+      threadId: persistedMessage.threadId,
+    });
+
+    await eventBus.publish({
+      id: crypto.randomUUID(),
+      type: EVENT_TYPE.AGENT_RUN_REQUESTED,
+      timestamp: new Date().toISOString(),
+      payload: {
+        runId,
+        threadId: persistedMessage.threadId,
+        messageId: persistedMessage.messageId,
+        model: model ?? DEFAULT_MODEL,
+        message: {
+          role: "user",
+          content: request.content,
+        },
       },
-      model: model ?? DEFAULT_MODEL,
     });
 
     return c.json(
@@ -98,168 +112,5 @@ export const createApp = (options: CreateAppOptions) => {
     });
   });
 
-  app.get("/api/chat/runs/:runId", async (c) => {
-    const runId = c.req.param("runId");
-    if (!runIdPattern.test(runId)) {
-      return c.json(
-        {
-          ok: false,
-          error: "Invalid runId. Expected format: run_<24 lowercase alphanumerics>",
-        },
-        400,
-      );
-    }
-
-    const run = await runService.getRunById(runId);
-    if (!run) {
-      return c.json(
-        {
-          ok: false,
-          error: "Run not found",
-        },
-        404,
-      );
-    }
-
-    return c.json({
-      ok: true,
-      run,
-    });
-  });
-
-  app.get("/api/chat/runs/:runId/events", async (c) => {
-    const runId = c.req.param("runId");
-    if (!runIdPattern.test(runId)) {
-      return c.json(
-        {
-          ok: false,
-          error: "Invalid runId. Expected format: run_<24 lowercase alphanumerics>",
-        },
-        400,
-      );
-    }
-
-    const events = runLoopEventService ? await runLoopEventService.listByRunId(runId) : [];
-
-    return c.json({
-      ok: true,
-      events,
-    });
-  });
-
-  app.get("/api/chat/runs/:runId/stream", async (c) => {
-    const runId = c.req.param("runId");
-    if (!runIdPattern.test(runId)) {
-      return c.json(
-        {
-          ok: false,
-          error: "Invalid runId. Expected format: run_<24 lowercase alphanumerics>",
-        },
-        400,
-      );
-    }
-
-    if (!pubsub) {
-      return c.json(
-        {
-          ok: false,
-          error: "Streaming is not configured on this server.",
-        },
-        500,
-      );
-    }
-
-    return streamSSE(c, async (stream) => {
-      const seenEventIds = new Set<string>();
-
-      // Send existing events
-      const existingEvents = runLoopEventService
-        ? await runLoopEventService.listByRunId(runId)
-        : [];
-      for (const event of existingEvents) {
-        seenEventIds.add(event.id);
-        await stream.writeSSE({
-          event: "run.event",
-          data: JSON.stringify(event),
-          id: event.id,
-        });
-      }
-
-      // Check existing status
-      const existingRun = await runService.getRunById(runId);
-      if (existingRun && (existingRun.status === "completed" || existingRun.status === "failed")) {
-        await stream.writeSSE({
-          event: "run.status",
-          data: JSON.stringify(existingRun),
-        });
-
-        if (existingRun.status === "completed") {
-          const messages = await messageService.listMessagesByThreadId(existingRun.threadId);
-          const reply = messages.toReversed().find((message) => {
-            return message.role === "assistant";
-          });
-          if (reply) {
-            await stream.writeSSE({
-              event: "run.reply",
-              data: JSON.stringify({ content: reply.content }),
-            });
-          }
-        }
-        return;
-      }
-
-      // Subscribe to new events
-      let unsubscribe: (() => void) | undefined;
-
-      const finished = new Promise<void>((resolve) => {
-        stream.onAbort(() => resolve());
-
-        unsubscribe = pubsub.subscribe(runId, async (event) => {
-          if (event.type === "run.event") {
-            if (seenEventIds.has(event.data.id)) return;
-            seenEventIds.add(event.data.id);
-            await stream.writeSSE({
-              event: "run.event",
-              data: JSON.stringify(event.data),
-              id: event.data.id,
-            });
-          } else if (event.type === "run.status") {
-            await stream.writeSSE({
-              event: "run.status",
-              data: JSON.stringify(event.data),
-            });
-
-            if (event.data.status === "completed" || event.data.status === "failed") {
-              if (event.data.status === "completed") {
-                const messages = await messageService.listMessagesByThreadId(event.data.threadId);
-                const reply = messages.toReversed().find((message) => {
-                  return message.role === "assistant";
-                });
-                if (reply) {
-                  await stream.writeSSE({
-                    event: "run.reply",
-                    data: JSON.stringify({ content: reply.content }),
-                  });
-                }
-              }
-              resolve();
-            }
-          }
-        });
-      });
-
-      await finished;
-      unsubscribe?.();
-    });
-  });
-
   return app;
 };
-
-const noopPublisher: EventPublisher = {
-  publish: async () => {
-    return;
-  },
-};
-
-export const app = createApp({ publisher: noopPublisher });

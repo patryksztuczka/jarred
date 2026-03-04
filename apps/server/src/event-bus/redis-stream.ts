@@ -1,9 +1,9 @@
 import type Redis from "ioredis";
-import type { AgentEvent, EventPublisher } from "./types";
+import type { RunEvent } from "./types";
 
 export interface StreamEntry {
   streamEntryId: string;
-  event: AgentEvent;
+  event: RunEvent;
 }
 
 interface RedisStreamBusOptions {
@@ -11,7 +11,7 @@ interface RedisStreamBusOptions {
 }
 
 export interface EventBus {
-  publish(event: AgentEvent): Promise<void>;
+  publish(event: RunEvent): Promise<void>;
   ensureConsumerGroup(groupName: string): Promise<void>;
   readGroup(
     groupName: string,
@@ -21,7 +21,7 @@ export interface EventBus {
   acknowledge(groupName: string, streamEntryId: string): Promise<void>;
 }
 
-export class RedisStreamBus implements EventPublisher {
+export class RedisStreamBus implements EventBus {
   private readonly redis: Redis;
   private readonly streamKey: string;
 
@@ -30,7 +30,7 @@ export class RedisStreamBus implements EventPublisher {
     this.streamKey = options.streamKey;
   }
 
-  public async publish(event: AgentEvent) {
+  public async publish(event: RunEvent) {
     await this.redis.xadd(this.streamKey, "*", "event", JSON.stringify(event));
   }
 
@@ -147,7 +147,7 @@ const extractField = (fields: unknown[], targetKey: string) => {
 
 const safeParseEvent = (value: string) => {
   try {
-    return JSON.parse(value) as AgentEvent;
+    return JSON.parse(value) as RunEvent;
   } catch {
     return;
   }

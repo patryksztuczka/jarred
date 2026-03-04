@@ -1,22 +1,20 @@
-import { EVENT_TYPE, type AgentEvent, type AgentRunRequestedPayload } from "../events/types";
-import type { EventBus } from "../events/redis-stream";
-import type { AssistantResponse } from "../services/chat/llm-service";
-import type { MessageService } from "../services/chat/message-service";
-import type { RunService, RunStatus } from "../services/chat/run-service";
-import type { RunLoopEventService } from "../services/chat/loop-event-service";
-import { type LlmService } from "../services/chat/llm-service";
+import type { LlmService } from "../modules/llm/llm-schemas";
+import type { MessageService } from "../modules/messages/messages-schemas";
+import type { RunService, RunStatus } from "../modules/runs/runs-schemas";
+import type { AssistantModelMessage, ToolModelMessage } from "ai";
 import { AgentLoop } from "./agent-loop";
 import {
   DEFAULT_MAX_ITERATIONS,
   DEFAULT_MODEL,
   DEFAULT_RECENT_MESSAGES_COUNT,
 } from "../lib/constants";
+import type { EventBus } from "../event-bus/redis-stream";
+import { EVENT_TYPE, type RunEvent } from "../event-bus/types";
 
 interface AgentRuntimeOptions {
-  bus: EventBus;
+  eventBus: EventBus;
   messageService: MessageService;
   runService: RunService;
-  runLoopEventService: RunLoopEventService;
   llmService: LlmService;
   consumerGroup: string;
   consumerName: string;
@@ -27,7 +25,7 @@ interface AgentRuntimeOptions {
 }
 
 export class AgentRuntime {
-  private readonly bus: EventBus;
+  private readonly eventBus: EventBus;
   private readonly messageService: MessageService;
   private readonly runService: RunService;
   private readonly consumerGroup: string;
@@ -37,7 +35,7 @@ export class AgentRuntime {
   private isRunning = false;
 
   public constructor(options: AgentRuntimeOptions) {
-    this.bus = options.bus;
+    this.eventBus = options.eventBus;
     this.messageService = options.messageService;
     this.runService = options.runService;
     this.consumerGroup = options.consumerGroup;
@@ -50,23 +48,23 @@ export class AgentRuntime {
 
     this.agentLoop = new AgentLoop({
       llmService: options.llmService,
-      messageService: options.messageService,
-      runLoopEventService: options.runLoopEventService,
-      recentMessageCount,
       model,
       maxIterations,
     });
+
+    this.recentMessageCount = recentMessageCount;
   }
 
+  private readonly recentMessageCount: number;
+
   public async init() {
-    await this.bus.ensureConsumerGroup(this.consumerGroup);
+    await this.eventBus.ensureConsumerGroup(this.consumerGroup);
   }
 
   public start() {
     if (this.isRunning) {
       return;
     }
-
     this.isRunning = true;
     void this.poll();
   }
@@ -88,7 +86,7 @@ export class AgentRuntime {
   }
 
   public async processOnce() {
-    const entries = await this.bus.readGroup(this.consumerGroup, this.consumerName);
+    const entries = await this.eventBus.readGroup(this.consumerGroup, this.consumerName);
     if (entries.length === 0) {
       return 0;
     }
@@ -100,19 +98,19 @@ export class AgentRuntime {
     return entries.length;
   }
 
-  private async processEntry(streamEntryId: string, event: AgentEvent) {
+  private async processEntry(streamEntryId: string, event: RunEvent) {
     if (event.type !== EVENT_TYPE.AGENT_RUN_REQUESTED) {
-      await this.bus.acknowledge(this.consumerGroup, streamEntryId);
+      await this.eventBus.acknowledge(this.consumerGroup, streamEntryId);
       return;
     }
 
-    const requestedEvent = event as AgentEvent<typeof EVENT_TYPE.AGENT_RUN_REQUESTED>;
-    const payload = requestedEvent.payload as AgentRunRequestedPayload;
+    const requestedEvent = event;
+    const payload = requestedEvent.payload;
 
     try {
       await this.updateRunStatus(payload.runId, "processing");
       const completedEvent = await this.buildCompletedEvent(requestedEvent);
-      await this.bus.publish(completedEvent);
+      await this.eventBus.publish(completedEvent);
       await this.updateRunStatus(payload.runId, "completed");
       this.logger.info("runtime.event.processed", {
         eventId: event.id,
@@ -120,34 +118,56 @@ export class AgentRuntime {
     } catch (error) {
       const safeError = this.getSafeErrorMessage(error);
       const failedEvent = this.buildFailedEvent(requestedEvent, safeError);
-      await this.bus.publish(failedEvent);
+      await this.eventBus.publish(failedEvent);
       await this.updateRunStatus(payload.runId, "failed", safeError);
       this.logger.error("runtime.event.failed", {
         eventId: event.id,
       });
     } finally {
-      await this.bus.acknowledge(this.consumerGroup, streamEntryId);
+      await this.eventBus.acknowledge(this.consumerGroup, streamEntryId);
     }
   }
 
-  private async updateRunStatus(runId: string, status: RunStatus, safeError?: string) {
+  private async updateRunStatus(runId: string, status: RunStatus, error?: string) {
     await this.runService.updateRunStatus({
       runId,
       status,
-      safeError,
+      error,
     });
   }
 
-  private async buildCompletedEvent(event: AgentEvent<typeof EVENT_TYPE.AGENT_RUN_REQUESTED>) {
+  private async buildCompletedEvent(event: RunEvent<typeof EVENT_TYPE.AGENT_RUN_REQUESTED>) {
     const payload = event.payload;
 
-    await this.agentLoop.run({
-      runId: payload.runId,
-      threadId: payload.threadId,
-      message: payload.message,
-    });
+    const recentMessages = await this.messageService.listMessagesByThreadId(
+      payload.threadId,
+      this.recentMessageCount,
+    );
+    const promptMessages = recentMessages.length > 0 ? recentMessages : [payload.message];
 
-    // TODO: Handle loop result
+    const loopResult = await this.agentLoop.run(
+      {
+        runId: payload.runId,
+        threadId: payload.threadId,
+        messages: promptMessages,
+      },
+      {
+        onEvent: async (loopEvent) => {
+          if (loopEvent.type !== "assistant.generated") {
+            return;
+          }
+
+          await this.messageService.createAssistantMessage({
+            threadId: loopEvent.payload.threadId,
+            content: this.getPersistedMessageContent(loopEvent.payload.response.message),
+          });
+        },
+      },
+    );
+
+    if (loopResult.reason === "error") {
+      throw new Error(loopResult.error ?? "unknown");
+    }
 
     return {
       id: crypto.randomUUID(),
@@ -155,24 +175,14 @@ export class AgentRuntime {
       timestamp: new Date().toISOString(),
       payload: {
         requestEventId: event.id,
+        runId: payload.runId,
+        threadId: payload.threadId,
       },
     };
   }
 
-  private async persistAssistantMessage(
-    event: AgentEvent<typeof EVENT_TYPE.AGENT_RUN_REQUESTED>,
-    output: string,
-  ) {
-    const payload = event.payload as AgentRunRequestedPayload;
-
-    await this.messageService.createAssistantMessage({
-      threadId: payload.threadId,
-      content: output,
-    });
-  }
-
   private buildFailedEvent(
-    event: AgentEvent<typeof EVENT_TYPE.AGENT_RUN_REQUESTED>,
+    event: RunEvent<typeof EVENT_TYPE.AGENT_RUN_REQUESTED>,
     safeError: string,
   ) {
     return {
@@ -181,6 +191,8 @@ export class AgentRuntime {
       timestamp: new Date().toISOString(),
       payload: {
         requestEventId: event.id,
+        runId: event.payload.runId,
+        threadId: event.payload.threadId,
         error: safeError,
       },
     };
@@ -194,23 +206,74 @@ export class AgentRuntime {
     return "unknown";
   }
 
-  private getAssistantResponseText(output: AssistantResponse) {
-    if (output.message.role !== "assistant") {
+  private getAssistantMessageText(message: AssistantModelMessage) {
+    if (typeof message.content === "string") {
+      return message.content;
+    }
+
+    const textContent = message.content
+      .flatMap((part) => (part.type === "text" ? [part.text] : []))
+      .join("\n")
+      .trim();
+
+    return textContent.length > 0 ? textContent : "No content";
+  }
+
+  private getPersistedMessageContent(message: AssistantModelMessage | ToolModelMessage) {
+    if (message.role === "assistant") {
+      return this.getAssistantMessageText(message);
+    }
+
+    const toolCalls = message.content
+      .flatMap((part) => {
+        if (part.type !== "tool-result") {
+          return [];
+        }
+
+        const payload = this.getToolPayload(part.output);
+
+        return [
+          {
+            toolName: part.toolName,
+            args: payload?.args ?? null,
+            output: payload?.output ?? part.output,
+          },
+        ];
+      })
+      .filter((entry) => entry.toolName.length > 0);
+
+    return JSON.stringify(toolCalls);
+  }
+
+  private getToolPayload(output: unknown) {
+    if (!this.isRecord(output) || output.type !== "text") {
       return undefined;
     }
 
-    const text =
-      typeof output.message.content === "string"
-        ? output.message.content.trim()
-        : output.message.content
-            .flatMap((part) => (part.type === "text" ? [part.text] : []))
-            .join("\n")
-            .trim();
-
-    if (text.length > 0) {
-      return text;
+    if (typeof output.value !== "string") {
+      return undefined;
     }
 
-    return undefined;
+    const parsedPayload = this.safeJsonParse(output.value);
+    if (!this.isRecord(parsedPayload)) {
+      return undefined;
+    }
+
+    return {
+      args: parsedPayload.args,
+      output: parsedPayload.output,
+    };
+  }
+
+  private isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null;
+  }
+
+  private safeJsonParse(value: string) {
+    try {
+      return JSON.parse(value) as unknown;
+    } catch {
+      return undefined;
+    }
   }
 }

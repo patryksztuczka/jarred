@@ -43,6 +43,13 @@
       "when": 1772149428095,
       "tag": "0005_parallel_brother_voodoo",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1772653730459,
+      "tag": "0006_parched_norman_osborn",
+      "breakpoints": true
     }
   ]
 }

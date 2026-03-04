@@ -103,9 +103,9 @@ Optional flags:
 
 - `--model <model-id>`
 - `--thread-id <thr_...>` to continue an existing thread
-- `--timeout-ms <number>` and `--poll-ms <number>`
+- `--timeout-ms <number>`
 
-The CLI also polls run loop events from `GET /api/chat/runs/:runId/events` and prints progress updates.
+The CLI opens a WebSocket stream at `GET /api/chat/runs/:runId/ws` and prints live run updates.
 
 Environment variable template: `.env.example`.
 

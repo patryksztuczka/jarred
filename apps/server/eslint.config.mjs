@@ -4,6 +4,9 @@ import eslintConfigPrettier from "eslint-config-prettier";
 import unicorn from "eslint-plugin-unicorn";
 import globals from "globals";
 import tseslint from "typescript-eslint";
+import { fileURLToPath } from "node:url";
+
+const tsconfigRootDir = fileURLToPath(new URL(".", import.meta.url));
 
 export default defineConfig(
   {
@@ -14,6 +17,9 @@ export default defineConfig(
   {
     files: ["**/*.{js,mjs,ts}"],
     languageOptions: {
+      parserOptions: {
+        tsconfigRootDir,
+      },
       globals: {
         ...globals.bun,
         ...globals.node,

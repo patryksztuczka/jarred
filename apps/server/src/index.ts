@@ -2,18 +2,12 @@ import Redis from "ioredis";
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { LangfuseSpanProcessor } from "@langfuse/otel";
 
-import { createApp } from "./app";
-import { createDrizzleChatIngressService } from "./services/chat/ingress-service";
-import { createDrizzleChatMessageService } from "./services/chat/message-service";
-import { createDrizzleChatRunService } from "./services/chat/run-service";
-import { createDrizzleRunLoopEventService } from "./services/chat/loop-event-service";
-import { createAiSdkChatLlmService } from "./services/chat/llm-service";
-import { OutboxPublisher } from "./events/outbox-publisher";
-import { createDrizzleOutboxService } from "./services/events/outbox-service";
-import { createOutboxPubSub } from "./services/events/outbox-pubsub";
-import { RedisStreamBus } from "./events/redis-stream";
+import { createApp, websocket } from "./app";
+import { DrizzleMessageService } from "./modules/messages/messages-service";
+import { DrizzleRunService } from "./modules/runs/runs-service";
+import { AiSdkLlmService } from "./modules/llm/llm-service";
+import { RedisStreamBus } from "./event-bus/redis-stream";
 import { AgentRuntime } from "./agent/runtime";
-import { createChatRunPubSub } from "./services/chat/run-pubsub";
 import { db } from "../db";
 
 const port = Number(process.env.PORT ?? 3000);
@@ -29,29 +23,18 @@ const sdk = new NodeSDK({
 sdk.start();
 
 const redis = new Redis(redisUrl);
-const bus = new RedisStreamBus(redis, {
+const eventBus = new RedisStreamBus(redis, {
   streamKey: redisStreamKey,
 });
-const runPubsub = createChatRunPubSub();
-const outboxPubsub = createOutboxPubSub();
-const llmService = createAiSdkChatLlmService();
-const messageService = createDrizzleChatMessageService(db);
-const runService = createDrizzleChatRunService(db, runPubsub);
-const runLoopEventService = createDrizzleRunLoopEventService(db, runPubsub);
-const ingressService = createDrizzleChatIngressService(db, outboxPubsub);
-const outboxService = createDrizzleOutboxService(db, outboxPubsub);
-const outboxPublisher = new OutboxPublisher({
-  outboxService,
-  publisher: bus,
-  pubsub: outboxPubsub,
-});
+const llmService = new AiSdkLlmService();
+const messageService = DrizzleMessageService.fromDatabase(db);
+const runService = DrizzleRunService.fromDatabase(db);
 
 const runtime = new AgentRuntime({
-  bus,
+  eventBus,
   messageService,
   runService,
   llmService,
-  runLoopEventService,
   consumerGroup: redisConsumerGroup,
   consumerName: redisConsumerName,
   model: "gpt-5-nano",
@@ -61,19 +44,17 @@ const runtime = new AgentRuntime({
 
 await runtime.init();
 runtime.start();
-outboxPublisher.start();
 
 const app = createApp({
-  ingressService,
   messageService,
+  eventBus,
   runService,
-  runLoopEventService,
-  pubsub: runPubsub,
 });
 
 const server = Bun.serve({
   port,
   fetch: app.fetch,
+  websocket,
 });
 
 console.log(`Server listening on http://localhost:${port}`);
@@ -89,7 +70,6 @@ const shutdown = async (signal: NodeJS.Signals) => {
   console.log(`Received ${signal}, shutting down...`);
 
   runtime.stop();
-  outboxPublisher.stop();
 
   try {
     server.stop(true);
