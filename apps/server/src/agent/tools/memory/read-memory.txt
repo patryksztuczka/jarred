@@ -1,0 +1,16 @@
+Reads the contents of the user's long-term memory files.
+
+Use this tool to recall stored information about the user — their personal details, projects, preferences, and other facts.
+
+Available memory files:
+- "profile" — basic info about the user (name, age, location, occupation, etc.)
+- "projects" — information about projects the user is working on
+- "facts" — miscellaneous facts, preferences, and notes about the user
+
+Parameters:
+- file: which memory file to read. Use "all" to read every memory file at once.
+
+When to use:
+- At the START of a conversation to load context about the user
+- When the user references something you should already know
+- When you need to recall specific details before responding

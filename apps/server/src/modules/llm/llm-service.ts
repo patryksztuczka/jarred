@@ -14,10 +14,13 @@ import {
   type LlmService,
 } from "./llm-schemas";
 import { webfetch } from "../../agent/tools/webfetch";
+import { readWorkingMemory, updateWorkingMemory } from "../../agent/tools/memory/memory-tools";
 
 export class AiSdkLlmService implements LlmService {
   private readonly tools = {
     webfetch,
+    readWorkingMemory,
+    updateWorkingMemory,
   };
 
   constructor(private readonly langfuseService: LangfusePromptService = new LangfuseService()) {}
