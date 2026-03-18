@@ -7,17 +7,17 @@ import {
   type ToolModelMessage,
 } from "ai";
 
-import { getWeather } from "../../agent/tools/weather-tool";
 import { type LangfusePromptService, LangfuseService } from "./langfuse-service";
 import {
   type GenerateAssistantResponseInput,
   assistantLlmOutputSchema,
   type LlmService,
 } from "./llm-schemas";
+import { webfetch } from "../../agent/tools/webfetch";
 
 export class AiSdkLlmService implements LlmService {
   private readonly tools = {
-    getWeather,
+    webfetch,
   };
 
   constructor(private readonly langfuseService: LangfusePromptService = new LangfuseService()) {}
