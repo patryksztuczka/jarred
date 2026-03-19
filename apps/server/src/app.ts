@@ -1,31 +1,17 @@
 import { Hono } from "hono";
+export { websocket } from "hono/bun";
 import { createId } from "@paralleldrive/cuid2";
 import { upgradeWebSocket } from "hono/bun";
-import {
-  createChatMessageRequestSchema,
-  type MessageService,
-} from "./modules/messages/messages-schemas";
-import { DEFAULT_MODEL } from "./lib/constants";
-import type { EventBus } from "./event-bus/redis-stream";
-import { EVENT_TYPE } from "./event-bus/types";
-import type { RunService } from "./modules/runs/runs-schemas";
-import type { RunStreamService } from "./agent/run-stream-service";
 
-export { websocket } from "hono/bun";
+import { createChatMessageRequestSchema } from "./modules/messages/messages-schemas";
+import { AgentSession, type AgentSessionOptions } from "./agent/agent-session";
 
-interface CreateAppOptions {
-  eventBus: EventBus;
-  messageService: MessageService;
-  runService: RunService;
-  runStreamService: RunStreamService;
-}
+type CreateAppOptions = AgentSessionOptions;
 
 export const createApp = (options: CreateAppOptions) => {
   const app = new Hono();
-  const messageService = options.messageService;
-  const eventBus = options.eventBus;
-  const runService = options.runService;
-  const runStreamService = options.runStreamService;
+  const { messageService, runService, runStreamService } = options;
+  const session = new AgentSession(options);
 
   const threadIdPattern = /^thr_[a-z0-9]{24}$/;
 
@@ -55,7 +41,6 @@ export const createApp = (options: CreateAppOptions) => {
 
     const threadId = request.threadId ?? `thr_${createId()}`;
     const runId = `run_${createId()}`;
-    const model = request.model;
 
     const persistedMessage = await messageService.createIncomingMessage({
       threadId,
@@ -67,20 +52,10 @@ export const createApp = (options: CreateAppOptions) => {
       threadId: persistedMessage.threadId,
     });
 
-    await eventBus.publish({
-      id: crypto.randomUUID(),
-      type: EVENT_TYPE.AGENT_RUN_REQUESTED,
-      timestamp: new Date().toISOString(),
-      payload: {
-        runId,
-        threadId: persistedMessage.threadId,
-        messageId: persistedMessage.messageId,
-        model: model ?? DEFAULT_MODEL,
-        message: {
-          role: "user",
-          content: request.content,
-        },
-      },
+    void session.start({
+      runId,
+      threadId: persistedMessage.threadId,
+      model: request.model,
     });
 
     return c.json(
@@ -90,7 +65,7 @@ export const createApp = (options: CreateAppOptions) => {
         runId,
         threadId: persistedMessage.threadId,
         messageId: persistedMessage.messageId,
-        model: model ?? DEFAULT_MODEL,
+        model: request.model,
       },
       202,
     );
