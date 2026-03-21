@@ -9,53 +9,103 @@ import {
 } from "ai";
 import { z } from "zod";
 
-import type { AgentLoopEvent, AgentLoopStopReason } from "./agent-event";
+import type { AgentEvent, AgentStopReason } from "./agent-event";
 
 const assistantOutputSchema = z.object({
   action: z.enum(["continue", "finish"]),
   response: z.string().min(1).nullable(),
 });
 
-interface AgentLoopOptions {
-  systemPrompt: string;
+const DEFAULT_MAX_ITERATIONS = 5;
+
+export interface AgentOptions {
+  instructions?: string;
+  systemPrompt?: string;
   model: string;
   tools?: ToolSet;
   maxIterations?: number;
+  telemetry?: boolean;
+  initialState?: Partial<Pick<AgentState, "messages" | "model">>;
 }
 
-export interface AgentLoopRunResult {
-  reason: AgentLoopStopReason;
+export interface AgentRunResult {
+  reason: AgentStopReason;
   error?: string;
 }
 
-type AgentLoopListener = (event: AgentLoopEvent) => void;
+export interface AgentRunInput {
+  messages: ModelMessage[];
+}
 
-export class AgentLoop {
-  private readonly systemPrompt: string;
-  private readonly model: string;
+export interface AgentState {
+  messages: ModelMessage[];
+  model: string;
+  isRunning: boolean;
+  error?: string;
+  stopReason?: AgentStopReason;
+}
+
+type AgentListener = (event: AgentEvent) => void;
+
+export class Agent {
+  private instructions: string;
   private readonly tools: ToolSet;
   private readonly maxIterations: number;
-  private readonly listeners = new Set<AgentLoopListener>();
+  private readonly telemetry: boolean;
+  private readonly listeners = new Set<AgentListener>();
+  readonly state: AgentState;
 
-  constructor(options: AgentLoopOptions) {
-    this.systemPrompt = options.systemPrompt;
-    this.model = options.model;
+  constructor(options: AgentOptions) {
+    this.instructions = options.instructions ?? options.systemPrompt ?? "";
     this.tools = options.tools ?? {};
-    this.maxIterations = options.maxIterations ?? 5;
+    this.maxIterations = options.maxIterations ?? DEFAULT_MAX_ITERATIONS;
+    this.telemetry = options.telemetry ?? false;
+    this.state = {
+      messages: options.initialState?.messages ?? [],
+      model: options.initialState?.model ?? options.model,
+      isRunning: false,
+    };
   }
 
-  subscribe(listener: AgentLoopListener): () => void {
+  subscribe(listener: AgentListener): () => void {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
     };
   }
 
-  async run(messages: ModelMessage[]): Promise<AgentLoopRunResult> {
-    this.emit({ type: "agent.start", model: this.model });
+  setInstructions(instructions: string | undefined) {
+    this.instructions = instructions ?? "";
+  }
+
+  setModel(model: string) {
+    this.state.model = model;
+  }
+
+  setMessages(messages: ModelMessage[]) {
+    this.state.messages = messages;
+  }
+
+  appendMessage(message: ModelMessage) {
+    this.state.messages.push(message);
+  }
+
+  clearMessages() {
+    this.state.messages = [];
+  }
+
+  async run(input?: AgentRunInput | ModelMessage[]): Promise<AgentRunResult> {
+    const messages = input ? (Array.isArray(input) ? input : input.messages) : this.state.messages;
+    const conversationMessages = [...messages];
+
+    this.state.messages = conversationMessages;
+    this.state.isRunning = true;
+    this.state.error = undefined;
+    this.state.stopReason = undefined;
+
+    this.emit({ type: "agent.start", model: this.state.model });
 
     try {
-      const promptMessages: ModelMessage[] = this.buildPromptMessages(messages);
       let iterationsCalled = 0;
       let lastAction: "continue" | "finish" = "continue";
 
@@ -64,11 +114,11 @@ export class AgentLoop {
         const reportedToolCallIds = new Set<string>();
 
         const result = streamText({
-          model: openai(this.model),
-          messages: promptMessages,
+          model: openai(this.state.model),
+          messages: this.buildPromptMessages(conversationMessages),
           output: Output.object({ schema: assistantOutputSchema }),
           tools: this.tools,
-          experimental_telemetry: { isEnabled: true },
+          experimental_telemetry: this.telemetry ? { isEnabled: true } : undefined,
           onChunk: ({ chunk }) => {
             if (chunk.type !== "tool-call") {
               return;
@@ -100,24 +150,27 @@ export class AgentLoop {
         const toolResult = toolResults.at(0);
 
         if (toolResult) {
-          for (const msg of response.messages) {
-            promptMessages.push(msg);
+          for (const message of response.messages) {
+            conversationMessages.push(message);
           }
+
           this.emit({
             type: "tool.end",
             toolName: toolResult.toolName,
             result: toolResult.output,
             iteration,
           });
+
           const toolMessage = response.messages.at(-1);
           if (toolMessage) {
             this.emit({ type: "message.complete", message: toolMessage as ToolModelMessage });
           }
+
           lastAction = "continue";
         } else {
           const output = await result.output;
           const assistantMessage = this.buildAssistantMessage(output.response);
-          promptMessages.push(assistantMessage);
+          conversationMessages.push(assistantMessage);
           this.emit({ type: "message.complete", message: assistantMessage });
           lastAction = output.action;
         }
@@ -125,21 +178,26 @@ export class AgentLoop {
         iterationsCalled += 1;
       }
 
-      const reason: AgentLoopStopReason = lastAction === "finish" ? "finish" : "max_iterations";
+      const reason: AgentStopReason = lastAction === "finish" ? "finish" : "max_iterations";
+      this.state.stopReason = reason;
       this.emit({ type: "agent.end", reason });
       return { reason };
     } catch (error) {
       const safeError = error instanceof Error ? error.message : "unknown";
+      this.state.error = safeError;
+      this.state.stopReason = "error";
       this.emit({ type: "agent.end", reason: "error", error: safeError });
       return { reason: "error", error: safeError };
+    } finally {
+      this.state.isRunning = false;
     }
   }
 
   private buildPromptMessages(messages: ModelMessage[]): ModelMessage[] {
     const result: ModelMessage[] = [];
 
-    if (this.systemPrompt) {
-      result.push({ role: "system", content: this.systemPrompt });
+    if (this.instructions) {
+      result.push({ role: "system", content: this.instructions });
     }
 
     result.push(...messages);
@@ -159,33 +217,6 @@ export class AgentLoop {
     return response;
   }
 
-  private buildToolMessage(toolResult: {
-    toolCallId: string;
-    toolName: string;
-    input: unknown;
-    output: unknown;
-  }): ToolModelMessage {
-    const toolPayload = JSON.stringify({
-      args: toolResult.input,
-      output: toolResult.output,
-    });
-
-    return {
-      role: "tool",
-      content: [
-        {
-          type: "tool-result",
-          toolCallId: toolResult.toolCallId,
-          toolName: toolResult.toolName,
-          output: {
-            type: "text",
-            value: toolPayload,
-          },
-        },
-      ],
-    };
-  }
-
   private buildAssistantMessage(response: string | null): AssistantModelMessage {
     return {
       role: "assistant",
@@ -193,7 +224,7 @@ export class AgentLoop {
     };
   }
 
-  private emit(event: AgentLoopEvent): void {
+  private emit(event: AgentEvent): void {
     for (const listener of this.listeners) {
       listener(event);
     }

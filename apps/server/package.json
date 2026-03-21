@@ -18,6 +18,8 @@
     "db:check": "drizzle-kit check"
   },
   "dependencies": {
+    "@jarred/agent-core": "workspace:*",
+    "@jarred/agent-session": "workspace:*",
     "@ai-sdk/openai": "^3.0.26",
     "@langfuse/client": "^4.6.1",
     "@langfuse/otel": "^4.6.1",

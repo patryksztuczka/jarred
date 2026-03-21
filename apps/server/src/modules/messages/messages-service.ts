@@ -2,6 +2,7 @@ import type { ModelMessage, ToolModelMessage } from "ai";
 import type { LibSQLDatabase } from "drizzle-orm/libsql";
 
 import type {
+  CreateMessageInput,
   CreateAssistantMessageInput,
   CreateIncomingMessageInput,
   MessageService,
@@ -35,6 +36,14 @@ export class DrizzleMessageService implements MessageService {
   }
 
   async createAssistantMessage(input: CreateAssistantMessageInput) {
+    return this.createMessage({
+      threadId: input.threadId,
+      role: "assistant",
+      content: input.content,
+    });
+  }
+
+  async createMessage(input: CreateMessageInput) {
     await this.messageRepository.ensureThread(input.threadId);
 
     const messageId = crypto.randomUUID();
@@ -42,7 +51,7 @@ export class DrizzleMessageService implements MessageService {
     await this.messageRepository.insertMessage({
       messageId,
       threadId: input.threadId,
-      role: "assistant",
+      role: input.role,
       content: input.content,
     });
 

@@ -20,6 +20,12 @@ export interface CreateAssistantMessageInput {
   content: string;
 }
 
+export interface CreateMessageInput {
+  threadId: string;
+  role: "assistant" | "tool";
+  content: string;
+}
+
 export interface PersistedMessage {
   messageId: string;
   threadId: string;
@@ -28,5 +34,6 @@ export interface PersistedMessage {
 export interface MessageService {
   createIncomingMessage(input: CreateIncomingMessageInput): Promise<PersistedMessage>;
   createAssistantMessage(input: CreateAssistantMessageInput): Promise<PersistedMessage>;
+  createMessage(input: CreateMessageInput): Promise<PersistedMessage>;
   listMessagesByThreadId(threadId: string, limit?: number): Promise<ModelMessage[]>;
 }

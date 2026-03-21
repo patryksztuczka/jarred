@@ -1,14 +1,14 @@
-export const RUN_STREAM_EVENT_TYPE = {
+export const EVENT_BUS_EVENT_TYPE = {
   RUN_STARTED: "run.started",
   TOOL_STARTED: "tool.started",
-  ASSISTANT_TOKEN: "assistant.token",
-  ASSISTANT_MESSAGE: "assistant.message",
+  AGENT_TOKEN: "agent.token",
+  AGENT_MESSAGE: "agent.message",
   RUN_COMPLETED: "run.completed",
   RUN_FAILED: "run.failed",
 } as const;
 
 interface RunStartedEvent {
-  type: typeof RUN_STREAM_EVENT_TYPE.RUN_STARTED;
+  type: typeof EVENT_BUS_EVENT_TYPE.RUN_STARTED;
   payload: {
     runId: string;
     threadId: string;
@@ -16,8 +16,8 @@ interface RunStartedEvent {
   };
 }
 
-interface AssistantTokenEvent {
-  type: typeof RUN_STREAM_EVENT_TYPE.ASSISTANT_TOKEN;
+interface AgentTokenEvent {
+  type: typeof EVENT_BUS_EVENT_TYPE.AGENT_TOKEN;
   payload: {
     runId: string;
     threadId: string;
@@ -27,7 +27,7 @@ interface AssistantTokenEvent {
 }
 
 interface ToolStartedEvent {
-  type: typeof RUN_STREAM_EVENT_TYPE.TOOL_STARTED;
+  type: typeof EVENT_BUS_EVENT_TYPE.TOOL_STARTED;
   payload: {
     runId: string;
     threadId: string;
@@ -36,8 +36,8 @@ interface ToolStartedEvent {
   };
 }
 
-interface AssistantMessageEvent {
-  type: typeof RUN_STREAM_EVENT_TYPE.ASSISTANT_MESSAGE;
+interface AgentMessageEvent {
+  type: typeof EVENT_BUS_EVENT_TYPE.AGENT_MESSAGE;
   payload: {
     runId: string;
     threadId: string;
@@ -46,7 +46,7 @@ interface AssistantMessageEvent {
 }
 
 interface RunCompletedEvent {
-  type: typeof RUN_STREAM_EVENT_TYPE.RUN_COMPLETED;
+  type: typeof EVENT_BUS_EVENT_TYPE.RUN_COMPLETED;
   payload: {
     runId: string;
     threadId: string;
@@ -54,7 +54,7 @@ interface RunCompletedEvent {
 }
 
 interface RunFailedEvent {
-  type: typeof RUN_STREAM_EVENT_TYPE.RUN_FAILED;
+  type: typeof EVENT_BUS_EVENT_TYPE.RUN_FAILED;
   payload: {
     runId: string;
     threadId: string;
@@ -62,26 +62,26 @@ interface RunFailedEvent {
   };
 }
 
-export type RunStreamEvent =
+export type EventBusEvent =
   | RunStartedEvent
   | ToolStartedEvent
-  | AssistantTokenEvent
-  | AssistantMessageEvent
+  | AgentTokenEvent
+  | AgentMessageEvent
   | RunCompletedEvent
   | RunFailedEvent;
 
-type RunStreamListener = (event: RunStreamEvent) => void;
+type EventBusListener = (event: EventBusEvent) => void;
 
-export interface RunStreamService {
-  subscribe(runId: string, listener: RunStreamListener): () => void;
-  publish(event: RunStreamEvent): void;
+export interface EventBus {
+  subscribe(runId: string, listener: EventBusListener): () => void;
+  publish(event: EventBusEvent): void;
 }
 
-export class InMemoryRunStreamService implements RunStreamService {
-  private readonly listenersByRunId = new Map<string, Set<RunStreamListener>>();
+export class InMemoryEventBus implements EventBus {
+  private readonly listenersByRunId = new Map<string, Set<EventBusListener>>();
 
-  public subscribe(runId: string, listener: RunStreamListener) {
-    const listeners = this.listenersByRunId.get(runId) ?? new Set<RunStreamListener>();
+  public subscribe(runId: string, listener: EventBusListener) {
+    const listeners = this.listenersByRunId.get(runId) ?? new Set<EventBusListener>();
     listeners.add(listener);
     this.listenersByRunId.set(runId, listeners);
 
@@ -98,7 +98,7 @@ export class InMemoryRunStreamService implements RunStreamService {
     };
   }
 
-  public publish(event: RunStreamEvent) {
+  public publish(event: EventBusEvent) {
     const listeners = this.listenersByRunId.get(event.payload.runId);
     if (!listeners || listeners.size === 0) {
       return;

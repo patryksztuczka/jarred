@@ -1,9 +1,14 @@
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+
 import { tool } from "ai";
 import z from "zod";
-import { resolve, join } from "node:path";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
-import READ_DESCRIPTION from "./read-memory.txt";
-import UPDATE_DESCRIPTION from "./update-memory.txt";
+
+const UPDATE_WORKING_MEMORY_DESCRIPTION = [
+  "Updates the user's long-term memory by adding, removing, or replacing facts.",
+  'Available files are "profile", "projects", and "facts".',
+  'Operations are "append", "remove", and "replace".',
+].join(" ");
 
 const MEMORY_DIR = resolve("tmp/memory/long-term");
 
@@ -19,7 +24,7 @@ const INITIAL_CONTENT: Record<MemoryFileKey, string> = {
   profile: [
     "# User Profile",
     "",
-    "Basic information about the user — name, age, location, occupation, etc.",
+    "Basic information about the user - name, age, location, occupation, etc.",
     "",
   ].join("\n"),
   projects: ["# User Projects", "", "Information about projects the user is working on.", ""].join(
@@ -33,59 +38,8 @@ const INITIAL_CONTENT: Record<MemoryFileKey, string> = {
   ].join("\n"),
 };
 
-async function ensureMemoryDir() {
-  await mkdir(MEMORY_DIR, { recursive: true });
-}
-
-async function readMemoryFile(key: MemoryFileKey): Promise<string> {
-  const filePath = join(MEMORY_DIR, MEMORY_FILES[key]);
-  try {
-    return await readFile(filePath, "utf-8");
-  } catch {
-    const initial = INITIAL_CONTENT[key];
-    await writeFile(filePath, initial, "utf-8");
-    return initial;
-  }
-}
-
-async function writeMemoryFile(key: MemoryFileKey, content: string) {
-  const filePath = join(MEMORY_DIR, MEMORY_FILES[key]);
-  await writeFile(filePath, content, "utf-8");
-}
-
-const memoryFileSchema = z.enum(["profile", "projects", "facts", "all"]);
-
-export const readWorkingMemory = tool({
-  description: READ_DESCRIPTION,
-  inputSchema: z.object({
-    file: memoryFileSchema.describe(
-      'Which memory file to read: "profile", "projects", "facts", or "all"',
-    ),
-  }),
-  execute: async ({ file }) => {
-    await ensureMemoryDir();
-
-    if (file === "all") {
-      const keys = Object.keys(MEMORY_FILES) as MemoryFileKey[];
-      const sections = await Promise.all(
-        keys.map(async (key) => {
-          const content = await readMemoryFile(key);
-          return content;
-        }),
-      );
-
-      return {
-        output: sections.join("\n---\n\n"),
-      };
-    }
-
-    const content = await readMemoryFile(file);
-    return { output: content };
-  },
-});
-
 export const updateWorkingMemory = tool({
-  description: UPDATE_DESCRIPTION,
+  description: UPDATE_WORKING_MEMORY_DESCRIPTION,
   inputSchema: z.object({
     file: z
       .enum(["profile", "projects", "facts"])
@@ -101,7 +55,7 @@ export const updateWorkingMemory = tool({
     target: z
       .string()
       .optional()
-      .describe('Required for "replace" — the existing line to find and replace'),
+      .describe('Required for "replace" - the existing line to find and replace'),
   }),
   execute: async ({ file, operation, content, target }) => {
     await ensureMemoryDir();
@@ -114,7 +68,6 @@ export const updateWorkingMemory = tool({
         await writeMemoryFile(file, updated);
         return { output: `Appended to ${file}: ${content}` };
       }
-
       case "remove": {
         const lines = current.split("\n");
         const trimmedContent = content.trim();
@@ -128,7 +81,6 @@ export const updateWorkingMemory = tool({
         await writeMemoryFile(file, lines.join("\n"));
         return { output: `Removed from ${file}: ${content}` };
       }
-
       case "replace": {
         if (!target) {
           return { output: 'The "replace" operation requires a "target" parameter' };
@@ -144,8 +96,28 @@ export const updateWorkingMemory = tool({
 
         lines[index] = content;
         await writeMemoryFile(file, lines.join("\n"));
-        return { output: `Replaced in ${file}: "${target}" → "${content}"` };
+        return { output: `Replaced in ${file}: "${target}" -> "${content}"` };
       }
     }
   },
 });
+
+async function ensureMemoryDir() {
+  await mkdir(MEMORY_DIR, { recursive: true });
+}
+
+async function readMemoryFile(key: MemoryFileKey): Promise<string> {
+  const filePath = join(MEMORY_DIR, MEMORY_FILES[key]);
+  try {
+    return await readFile(filePath, "utf8");
+  } catch {
+    const initial = INITIAL_CONTENT[key];
+    await writeFile(filePath, initial, "utf8");
+    return initial;
+  }
+}
+
+async function writeMemoryFile(key: MemoryFileKey, content: string) {
+  const filePath = join(MEMORY_DIR, MEMORY_FILES[key]);
+  await writeFile(filePath, content, "utf8");
+}
