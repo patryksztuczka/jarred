@@ -15,7 +15,7 @@ export interface CreateIncomingMessageInput {
   content: string;
 }
 
-export interface CreateAssistantMessageInput {
+export interface CreateAgentMessageInput {
   threadId: string;
   content: string;
 }
@@ -33,7 +33,7 @@ export interface PersistedMessage {
 
 export interface MessageService {
   createIncomingMessage(input: CreateIncomingMessageInput): Promise<PersistedMessage>;
-  createAssistantMessage(input: CreateAssistantMessageInput): Promise<PersistedMessage>;
+  createAgentMessage(input: CreateAgentMessageInput): Promise<PersistedMessage>;
   createMessage(input: CreateMessageInput): Promise<PersistedMessage>;
   listMessagesByThreadId(threadId: string, limit?: number): Promise<ModelMessage[]>;
 }

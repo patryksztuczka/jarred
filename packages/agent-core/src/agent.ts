@@ -11,7 +11,7 @@ import { z } from "zod";
 
 import type { AgentEvent, AgentStopReason } from "./agent-event";
 
-const assistantOutputSchema = z.object({
+const agentOutputSchema = z.object({
   action: z.enum(["continue", "finish"]),
   response: z.string().min(1).nullable(),
 });
@@ -116,7 +116,7 @@ export class Agent {
         const result = streamText({
           model: openai(this.state.model),
           messages: this.buildPromptMessages(conversationMessages),
-          output: Output.object({ schema: assistantOutputSchema }),
+          output: Output.object({ schema: agentOutputSchema }),
           tools: this.tools,
           experimental_telemetry: this.telemetry ? { isEnabled: true } : undefined,
           onChunk: ({ chunk }) => {
@@ -169,9 +169,9 @@ export class Agent {
           lastAction = "continue";
         } else {
           const output = await result.output;
-          const assistantMessage = this.buildAssistantMessage(output.response);
-          conversationMessages.push(assistantMessage);
-          this.emit({ type: "message.complete", message: assistantMessage });
+          const agentMessage = this.buildAgentMessage(output.response);
+          conversationMessages.push(agentMessage);
+          this.emit({ type: "message.complete", message: agentMessage });
           lastAction = output.action;
         }
 
@@ -217,7 +217,7 @@ export class Agent {
     return response;
   }
 
-  private buildAssistantMessage(response: string | null): AssistantModelMessage {
+  private buildAgentMessage(response: string | null): AssistantModelMessage {
     return {
       role: "assistant",
       content: response ?? "No content",

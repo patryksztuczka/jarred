@@ -68,45 +68,27 @@ const run = async () => {
     activeThreadId = accepted.threadId;
 
     console.log(`Run accepted: ${accepted.runId}`);
-    let hasPrintedAssistantLabel = false;
+    let hasPrintedAgentLabel = false;
 
     const streamStatus = await waitForRunWebSocket({
       baseUrl: config.baseUrl,
       runId: accepted.runId,
       timeoutMs: config.timeoutMs,
       onToken: (delta) => {
-        if (!hasPrintedAssistantLabel) {
-          process.stdout.write("Assistant: ");
-          hasPrintedAssistantLabel = true;
+        if (!hasPrintedAgentLabel) {
+          process.stdout.write("Agent: ");
+          hasPrintedAgentLabel = true;
         }
         process.stdout.write(delta);
       },
     });
 
     if (streamStatus.status === "failed") {
-      console.log(`Assistant run failed: ${streamStatus.safeError ?? "Unknown error"}`);
+      console.log(`Agent run failed: ${streamStatus.safeError ?? "Unknown error"}`);
       continue;
     }
-
-    if (streamStatus.didStreamTokens) {
-      if (
-        streamStatus.reply &&
-        streamStatus.reply.startsWith(streamStatus.streamedReply) &&
-        streamStatus.reply.length > streamStatus.streamedReply.length
-      ) {
-        process.stdout.write(streamStatus.reply.slice(streamStatus.streamedReply.length));
-      }
-
-      process.stdout.write("\n");
-      continue;
-    }
-
-    if (!streamStatus.reply) {
-      console.log("(no reply message found yet)");
-      continue;
-    }
-
-    console.log(`Assistant: ${streamStatus.reply}`);
+...
+    console.log(`Agent: ${streamStatus.reply}`);
   }
 };
 
@@ -236,7 +218,7 @@ const waitForRunWebSocket = async (inputData: {
         }
 
         switch (payload.type) {
-          case "assistant.token": {
+          case "agent.token": {
             const tokenPayload = payload.payload as { delta?: unknown };
             if (typeof tokenPayload.delta === "string" && tokenPayload.delta.length > 0) {
               streamedReply += tokenPayload.delta;
@@ -245,7 +227,7 @@ const waitForRunWebSocket = async (inputData: {
             }
             break;
           }
-          case "assistant.message": {
+          case "agent.message": {
             const messagePayload = payload.payload as { message?: unknown };
             if (typeof messagePayload.message === "string") {
               reply = messagePayload.message;

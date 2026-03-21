@@ -3,7 +3,7 @@ import type { LibSQLDatabase } from "drizzle-orm/libsql";
 
 import type {
   CreateMessageInput,
-  CreateAssistantMessageInput,
+  CreateAgentMessageInput,
   CreateIncomingMessageInput,
   MessageService,
 } from "./messages-schemas";
@@ -35,7 +35,7 @@ export class DrizzleMessageService implements MessageService {
     };
   }
 
-  async createAssistantMessage(input: CreateAssistantMessageInput) {
+  async createAgentMessage(input: CreateAgentMessageInput) {
     return this.createMessage({
       threadId: input.threadId,
       role: "assistant",

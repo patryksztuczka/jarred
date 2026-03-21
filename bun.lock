@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "jarred-the-assistant",
+      "name": "jarred",
       "devDependencies": {
         "prettier": "^3.6.2",
         "turbo": "^2.4.4",

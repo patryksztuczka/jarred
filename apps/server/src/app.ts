@@ -120,7 +120,7 @@ export const createApp = () => {
             payload: {
               runId: event.runId,
               threadId: event.sessionId,
-              message: getAssistantMessageText(event.message.content),
+              message: getAgentMessageText(event.message.content),
             },
           });
           break;
@@ -221,7 +221,7 @@ export const createApp = () => {
   return app;
 };
 
-function getAssistantMessageText(content: unknown): string {
+function getAgentMessageText(content: unknown): string {
   if (typeof content === "string") {
     return content;
   }
@@ -242,7 +242,7 @@ function getAssistantMessageText(content: unknown): string {
 
 function getPersistedMessageContent(message: { role: string; content: unknown }): string {
   if (message.role === "assistant") {
-    return getAssistantMessageText(message.content);
+    return getAgentMessageText(message.content);
   }
 
   if (!Array.isArray(message.content)) {
