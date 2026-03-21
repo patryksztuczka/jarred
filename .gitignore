@@ -23,3 +23,7 @@ out
 # IDEs
 .idea
 .vscode
+
+.env
+
+tmp

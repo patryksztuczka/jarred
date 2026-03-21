@@ -1,0 +1,19 @@
+{
+  "name": "api-server",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file=.env src/index.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.14.3",
+    "hono": "^4.7.11",
+    "@jarred/agent-session": "workspace:*",
+    "@jarred/agent-core": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.4",
+    "typescript": "~5.9.3"
+  }
+}
