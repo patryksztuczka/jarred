@@ -9,7 +9,8 @@
   "dependencies": {
     "@ai-sdk/openai": "^3.0.26",
     "ai": "^6.0.77",
-    "turndown": "^7.2.2"
+    "turndown": "^7.2.2",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

@@ -8,7 +8,6 @@ import {
 } from "ai";
 
 import type { AgentEvent, AgentStopReason } from "./agent-event";
-import type { Module } from "node:vm";
 
 const DEFAULT_MAX_ITERATIONS = 5;
 const DEFAULT_MODEL = "gpt-5-nano";
@@ -128,7 +127,9 @@ export class Agent {
         const result = streamText({
           model: openai(context.model),
           messages: [
-            { role: "system", content: context.systemPrompt },
+            ...(context.systemPrompt
+              ? ([{ role: "system", content: context.systemPrompt }] as const)
+              : []),
             ...context.messages,
             ...turnMessages,
           ],
