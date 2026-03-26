@@ -1,0 +1,23 @@
+examples/chat-ui/src/App.tsx
+  1a7d1aa072dffe1a 1,102-119,121-160,500,502-508,510,536-538,540-544,547-549,551-569,571,573-579,582,584-585
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.19",
+  "base_commit_sha": "67d4611f903d89365dbcb597fff31a80b92633f1",
+  "prompts": {
+    "1a7d1aa072dffe1a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "74618df3-0f71-438f-bc8b-37013842bf78",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Patryk Sztuczka <patryk.sztuczka00@gmail.com>",
+      "messages": [],
+      "total_additions": 118,
+      "total_deletions": 43,
+      "accepted_lines": 109,
+      "overriden_lines": 1
+    }
+  }
+}
