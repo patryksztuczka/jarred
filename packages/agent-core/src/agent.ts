@@ -203,7 +203,12 @@ export class Agent {
               }
 
               reportedToolCallIds.add(part.toolCallId);
-              this.emit({ type: "tool.start", toolName: part.toolName, iteration });
+              this.emit({
+                type: "tool.start",
+                toolName: part.toolName,
+                args: part.input,
+                iteration,
+              });
               break;
             }
           }

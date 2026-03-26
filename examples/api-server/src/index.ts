@@ -94,6 +94,8 @@ app.post("/message", async (c) => {
           "agent.reasoning.delta",
           "agent.reasoning.end",
           "agent.token",
+          "tool.start",
+          "tool.end",
           "message.complete",
         ];
 

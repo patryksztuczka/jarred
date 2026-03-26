@@ -6,7 +6,7 @@ export type AgentEvent =
   | { type: "agent.reasoning.delta"; delta: string; iteration: number }
   | { type: "agent.reasoning.end"; iteration: number }
   | { type: "agent.token"; delta: string; iteration: number }
-  | { type: "tool.start"; toolName: string; iteration: number }
+  | { type: "tool.start"; toolName: string; args: unknown; iteration: number }
   | { type: "tool.end"; toolName: string; result: unknown; iteration: number }
   | { type: "message.complete"; message: AssistantModelMessage | ToolModelMessage }
   | { type: "agent.end"; reason: AgentStopReason; error?: string };

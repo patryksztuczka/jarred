@@ -11,6 +11,7 @@ type AgentTextMessage = {
   content: string;
   reasoning?: string;
   isStreaming?: boolean;
+  isReasoningStreaming?: boolean;
 };
 
 type AgentToolCallMessage = {
@@ -32,53 +33,31 @@ type SessionResponse = {
   messages: SessionModelMessage[];
 };
 
-function ToolCallBubble({
-  message,
-  onApprove,
-  onReject,
-}: {
-  message: AgentToolCallMessage;
-  onApprove?: () => void;
-  onReject?: () => void;
-}) {
+function ToolCallBlock({ message }: { message: AgentToolCallMessage }) {
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-800/50">
-      <div className="flex items-center gap-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">
-        <span className="flex h-5 w-5 items-center justify-center rounded bg-amber-100 text-xs dark:bg-amber-900/50">
-          <ToolIcon />
+    <CollapsibleBlock
+      label={
+        <span className="flex items-center gap-1.5">
+          <span className="flex h-4 w-4 items-center justify-center rounded bg-amber-100 dark:bg-amber-900/50">
+            <ToolIcon />
+          </span>
+          <span className="tracking-wide">
+            Tool: <span className="font-mono">{message.toolName}</span>
+          </span>
+          {message.status === "approved" && (
+            <span className="ml-1 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400">
+              Approved
+            </span>
+          )}
+          {message.status === "rejected" && (
+            <span className="ml-1 rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] text-red-700 dark:bg-red-900/40 dark:text-red-400">
+              Rejected
+            </span>
+          )}
         </span>
-        <span className="font-mono text-xs">{message.toolName}</span>
-        {message.status === "approved" && (
-          <span className="ml-auto rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400">
-            Approved
-          </span>
-        )}
-        {message.status === "rejected" && (
-          <span className="ml-auto rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700 dark:bg-red-900/40 dark:text-red-400">
-            Rejected
-          </span>
-        )}
-      </div>
-      <pre className="overflow-x-auto rounded bg-zinc-100 p-2 text-xs text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
-        {JSON.stringify(message.args, null, 2)}
-      </pre>
-      {message.status === "pending" && (
-        <div className="flex gap-2 pt-1">
-          <button
-            onClick={onApprove}
-            className="cursor-pointer rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-emerald-700"
-          >
-            Approve
-          </button>
-          <button
-            onClick={onReject}
-            className="cursor-pointer rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600"
-          >
-            Reject
-          </button>
-        </div>
-      )}
-    </div>
+      }
+      content={JSON.stringify(message.args, null, 2)}
+    />
   );
 }
 
@@ -117,25 +96,35 @@ function ChevronIcon({ open }: { open: boolean }) {
   );
 }
 
-function ThinkingBlock({ reasoning, isStreaming }: { reasoning: string; isStreaming?: boolean }) {
-  const [expanded, setExpanded] = useState(true);
+function CollapsibleBlock({
+  label,
+  content,
+  isStreaming,
+  defaultCollapsed = true,
+}: {
+  label: React.ReactNode;
+  content: string;
+  isStreaming?: boolean;
+  defaultCollapsed?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(!defaultCollapsed);
   const contentRef = useRef<HTMLDivElement>(null);
 
   // Auto-collapse when streaming finishes
   useEffect(() => {
-    if (!isStreaming && reasoning) {
+    if (!isStreaming && content) {
       setExpanded(false);
     }
   }, [isStreaming]);
 
   return (
-    <div className="ml-9.5 mb-1 max-w-[80%]">
+    <div className="ml-9.5 max-w-[80%]">
       <button
         onClick={() => setExpanded((v) => !v)}
         className="flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-zinc-400 transition-colors hover:bg-zinc-800/50 hover:text-zinc-300"
       >
         <ChevronIcon open={expanded} />
-        <span className="tracking-wide">Thinking</span>
+        {label}
         {isStreaming && (
           <span className="ml-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-violet-400" />
         )}
@@ -151,10 +140,20 @@ function ThinkingBlock({ reasoning, isStreaming }: { reasoning: string; isStream
           ref={contentRef}
           className="mt-1 ml-2 border-l-2 border-zinc-700/50 pl-3 text-xs leading-relaxed whitespace-pre-wrap text-zinc-500 dark:text-zinc-400"
         >
-          {reasoning}
+          {content}
         </div>
       </div>
     </div>
+  );
+}
+
+function ThinkingBlock({ reasoning, isStreaming }: { reasoning: string; isStreaming?: boolean }) {
+  return (
+    <CollapsibleBlock
+      label={<span className="tracking-wide">Thinking</span>}
+      content={reasoning}
+      isStreaming={isStreaming}
+    />
   );
 }
 
@@ -239,6 +238,8 @@ function sessionMessagesToUiMessages(messages: SessionModelMessage[]): Message[]
       let content = "";
       let reasoning = "";
 
+      const toolCalls: AgentToolCallMessage[] = [];
+
       for (const part of message.content) {
         if (!isRecord(part) || typeof part.type !== "string") {
           continue;
@@ -251,18 +252,28 @@ function sessionMessagesToUiMessages(messages: SessionModelMessage[]): Message[]
         if (part.type === "text" && typeof part.text === "string") {
           content += part.text;
         }
+
+        if (part.type === "tool-call" && typeof part.toolName === "string") {
+          toolCalls.push({
+            role: "agent",
+            type: "tool_call",
+            toolName: part.toolName,
+            args: isRecord(part.args) ? part.args : {},
+            status: "approved",
+          });
+        }
       }
 
-      if (!content && !reasoning) {
-        continue;
+      if (content || reasoning) {
+        uiMessages.push({
+          role: "agent",
+          type: "text",
+          content,
+          reasoning: reasoning || undefined,
+        });
       }
 
-      uiMessages.push({
-        role: "agent",
-        type: "text",
-        content,
-        reasoning: reasoning || undefined,
-      });
+      uiMessages.push(...toolCalls);
     }
   }
 
@@ -373,12 +384,12 @@ export default function App() {
         setMessages((prev) => {
           const last = prev[prev.length - 1];
           if (last?.role === "agent" && last.type === "text" && last.isStreaming) {
-            return prev;
+            return [...prev.slice(0, -1), { ...last, isReasoningStreaming: true }];
           }
 
           return [
             ...prev,
-            { role: "agent", type: "text", content: "", reasoning: "", isStreaming: true },
+            { role: "agent", type: "text", content: "", reasoning: "", isStreaming: true, isReasoningStreaming: true },
           ];
         });
         break;
@@ -393,13 +404,23 @@ export default function App() {
         setMessages((prev) => {
           const last = prev[prev.length - 1];
           if (last?.role === "agent" && last.type === "text" && last.isStreaming) {
-            return [...prev.slice(0, -1), { ...last, reasoning }];
+            return [...prev.slice(0, -1), { ...last, reasoning, isReasoningStreaming: true }];
           }
 
           return [
             ...prev,
-            { role: "agent", type: "text", content: "", reasoning, isStreaming: true },
+            { role: "agent", type: "text", content: "", reasoning, isStreaming: true, isReasoningStreaming: true },
           ];
+        });
+        break;
+      }
+      case "agent.reasoning.end": {
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last?.role === "agent" && last.type === "text" && last.isStreaming) {
+            return [...prev.slice(0, -1), { ...last, isReasoningStreaming: false }];
+          }
+          return prev;
         });
         break;
       }
@@ -431,6 +452,32 @@ export default function App() {
         });
         break;
       }
+      case "tool.start": {
+        const toolName = event.toolName as string;
+        const args = (event.args as Record<string, unknown>) ?? {};
+
+        if (showSkeleton) setShowSkeleton(false);
+
+        setMessages((prev) => [
+          ...prev,
+          { role: "agent", type: "tool_call", toolName, args, status: "pending" as const },
+        ]);
+        break;
+      }
+      case "tool.end": {
+        setMessages((prev) => {
+          const lastToolIdx = prev.findLastIndex(
+            (msg) => msg.role === "agent" && msg.type === "tool_call" && msg.status === "pending",
+          );
+          if (lastToolIdx === -1) return prev;
+          return prev.map((msg, i) =>
+            i === lastToolIdx && msg.role === "agent" && msg.type === "tool_call"
+              ? { ...msg, status: "approved" as const }
+              : msg,
+          );
+        });
+        break;
+      }
       case "agent.end": {
         setMessages((prev) =>
           prev.map((msg) =>
@@ -453,25 +500,6 @@ export default function App() {
     }
   }
 
-  function handleApprove(index: number) {
-    setMessages((prev) =>
-      prev.map((msg, i) =>
-        i === index && msg.role === "agent" && msg.type === "tool_call"
-          ? { ...msg, status: "approved" as const }
-          : msg,
-      ),
-    );
-  }
-
-  function handleReject(index: number) {
-    setMessages((prev) =>
-      prev.map((msg, i) =>
-        i === index && msg.role === "agent" && msg.type === "tool_call"
-          ? { ...msg, status: "rejected" as const }
-          : msg,
-      ),
-    );
-  }
 
   return (
     <div className="flex h-screen flex-col bg-white dark:bg-zinc-900">
@@ -497,9 +525,9 @@ export default function App() {
 
             if (msg.type === "text") {
               return (
-                <div key={i} className="flex flex-col">
+                <div key={i} className="flex flex-col gap-2">
                   {msg.reasoning ? (
-                    <ThinkingBlock reasoning={msg.reasoning} isStreaming={msg.isStreaming} />
+                    <ThinkingBlock reasoning={msg.reasoning} isStreaming={msg.isReasoningStreaming} />
                   ) : null}
                   {msg.content ? (
                     <div className="flex items-start gap-2.5">
@@ -514,15 +542,8 @@ export default function App() {
             }
 
             return (
-              <div key={i} className="flex items-start gap-2.5">
-                <AgentAvatar />
-                <div className="max-w-[80%]">
-                  <ToolCallBubble
-                    message={msg}
-                    onApprove={() => handleApprove(i)}
-                    onReject={() => handleReject(i)}
-                  />
-                </div>
+              <div key={i}>
+                <ToolCallBlock message={msg} />
               </div>
             );
           })}
