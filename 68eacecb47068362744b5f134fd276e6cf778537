@@ -1,0 +1,27 @@
+examples/api-server/src/index.ts
+  b6af876a460e5cbf 97-98
+packages/agent-core/src/agent-event.ts
+  b6af876a460e5cbf 9
+examples/chat-ui/src/App.tsx
+  b6af876a460e5cbf 14,36,38-42,44-45,47-60,99-108,110,115,121,127,143,150-156,241-242,255-263,267-273,276,387,392,407,412,417-423,455-480,528,530,546
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.20",
+  "base_commit_sha": "68eacecb47068362744b5f134fd276e6cf778537",
+  "prompts": {
+    "b6af876a460e5cbf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a291ff7c-816f-40c3-84bf-b73b8f448864",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Patryk Sztuczka <patryk.sztuczka00@gmail.com>",
+      "messages": [],
+      "total_additions": 117,
+      "total_deletions": 94,
+      "accepted_lines": 114,
+      "overriden_lines": 1
+    }
+  }
+}
